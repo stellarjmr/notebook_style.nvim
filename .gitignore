@@ -1,0 +1,21 @@
+# Neovim
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Test files
+test/
+test_*.py
+test_*.lua
+*.test.lua
+
+# Development files
+CLAUDE.md
+test_plugin.md
+
+# IDE
+.idea/
+.vscode/
