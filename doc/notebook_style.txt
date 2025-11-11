@@ -1,0 +1,164 @@
+*notebook_style.txt*  Render Python cells with beautiful borders
+
+Author:  stellarjmr
+License: MIT
+Version: 0.1.0
+
+==============================================================================
+CONTENTS                                            *notebook_style-contents*
+
+1. Introduction ............................ |notebook_style-introduction|
+2. Installation ............................ |notebook_style-installation|
+3. Usage ................................... |notebook_style-usage|
+4. Commands ................................ |notebook_style-commands|
+5. Configuration ........................... |notebook_style-configuration|
+6. Highlights .............................. |notebook_style-highlights|
+
+==============================================================================
+1. INTRODUCTION                                 *notebook_style-introduction*
+
+notebook_style.nvim is a Neovim plugin that renders Python file cells
+(separated by # %% delimiters) with beautiful, customizable borders.
+
+Features:
+  - Visual cell borders on all four sides
+  - Smart visibility (hides delimiters in normal mode, hides borders in insert)
+  - Fully customizable colors and border styles
+  - Non-intrusive rendering using native extmarks
+  - Lightweight and efficient
+
+==============================================================================
+2. INSTALLATION                                 *notebook_style-installation*
+
+Using lazy.nvim: >lua
+    {
+      'stellarjmr/notebook_style.nvim',
+      ft = 'python',
+      opts = {},
+    }
+<
+
+Using packer.nvim: >lua
+    use {
+      'stellarjmr/notebook_style.nvim',
+      ft = 'python',
+      config = function()
+        require('notebook_style').setup()
+      end
+    }
+<
+
+==============================================================================
+3. USAGE                                               *notebook_style-usage*
+
+The plugin automatically activates for Python files with # %% delimiters.
+
+Cell format: >python
+    # %%
+    # This is a cell
+    import numpy as np
+    print("Hello")
+
+    # %%
+    # Another cell
+    x = [1, 2, 3]
+<
+
+The plugin will render borders around each cell, hiding the # %% delimiters
+in normal/visual modes and showing them in insert mode.
+
+==============================================================================
+4. COMMANDS                                         *notebook_style-commands*
+
+                                                    *:NotebookStyleEnable*
+:NotebookStyleEnable
+    Enable the plugin for the current buffer.
+
+                                                    *:NotebookStyleDisable*
+:NotebookStyleDisable
+    Disable the plugin for the current buffer.
+
+                                                    *:NotebookStyleToggle*
+:NotebookStyleToggle
+    Toggle the plugin for the current buffer.
+
+==============================================================================
+5. CONFIGURATION                               *notebook_style-configuration*
+
+Default configuration: >lua
+    require('notebook_style').setup({
+      -- Cell delimiter pattern (Lua pattern)
+      cell_delimiter = "^#%s*%%%%",
+
+      -- Border style: 'solid', 'dashed', or 'double'
+      border_style = 'solid',
+
+      -- Colors
+      colors = {
+        border = '#6272A4',      -- Border color
+        delimiter = '#50FA7B',   -- Delimiter marker color
+      },
+
+      -- Visibility options
+      hide_delimiter = true,           -- Hide # %% in normal/visual modes
+      hide_border_in_insert = true,    -- Hide borders in insert mode
+
+      -- Cell width configuration
+      cell_width_percentage = 80,      -- Cell width as % of window
+      min_cell_width = 40,             -- Minimum cell width
+      max_cell_width = 120,            -- Maximum cell width
+
+      -- Filetypes to enable the plugin for
+      filetypes = { 'python' },
+    })
+<
+
+                                                *notebook_style-border-style*
+Border Styles~
+
+Available border styles:
+  - 'solid': Standard box drawing characters (default)
+  - 'dashed': Dashed box drawing characters
+  - 'double': Double-line box drawing characters
+
+                                            *notebook_style-cell-width*
+Cell Width~
+
+Control cell width with these options:
+  - cell_width_percentage: Percentage of window width (1-100)
+  - min_cell_width: Minimum width in characters
+  - max_cell_width: Maximum width in characters
+
+Examples: >lua
+    -- Narrow cells (60% width)
+    cell_width_percentage = 60
+
+    -- Wide cells (95% width)
+    cell_width_percentage = 95
+<
+
+==============================================================================
+6. HIGHLIGHTS                                     *notebook_style-highlights*
+
+                                                *hl-NotebookCellBorder*
+NotebookCellBorder
+    Highlight group for cell borders.
+    Default: links to configured border color
+
+                                                *hl-NotebookCellDelimiter*
+NotebookCellDelimiter
+    Highlight group for cell delimiter markers.
+    Default: links to configured delimiter color
+
+You can customize these highlight groups: >vim
+    :highlight NotebookCellBorder guifg=#FF79C6
+    :highlight NotebookCellDelimiter guifg=#8BE9FD
+<
+
+Or link to existing groups: >lua
+    vim.api.nvim_set_hl(0, 'NotebookCellBorder', { link = 'Comment' })
+    vim.api.nvim_set_hl(0, 'NotebookCellDelimiter', { link = 'Special' })
+<
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
