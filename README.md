@@ -102,6 +102,9 @@ require('notebook_style').setup({
   hide_delimiter = true,           -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,    -- Hide borders in insert mode
 
+  -- Cell marker (shown when delimiter is hidden)
+  cell_marker = ' Cell',        --  is Python nerd font icon
+
   -- Cell width configuration
   cell_width_percentage = 80,      -- Cell width as % of window width (1-100)
   min_cell_width = 40,             -- Minimum cell width in characters
@@ -180,6 +183,25 @@ require('notebook_style').setup({
 - **Narrow cells** (60-70%): Better for wide windows, easier to read
 - **Wide cells** (90-95%): Better for narrow windows, maximize space
 - **Default** (80%): Good balance for most use cases
+
+### Cell Marker Customization
+
+Customize the text shown when `# %%` delimiters are hidden:
+
+```lua
+require('notebook_style').setup({
+  -- With Python nerd font icon (default, requires a Nerd Font)
+  cell_marker = ' Cell',  --  is the Python icon
+
+  -- Or use other icons/text
+  cell_marker = '📘 Cell',          -- Book emoji
+  cell_marker = '▶ Cell',           -- Play icon
+  cell_marker = '# Cell',           -- Simple hash
+  cell_marker = '',                 -- Just the Python icon
+})
+```
+
+**Note**: Nerd font icons require a [Nerd Font](https://www.nerdfonts.com/) to be installed and set as your terminal font.
 
 ### Example Configurations
 

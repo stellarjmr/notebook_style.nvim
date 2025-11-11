@@ -36,8 +36,8 @@ end
 function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width)
   local chars = get_border_chars()
 
-  -- Define cell marker text (used consistently throughout)
-  local cell_marker_text = '  Cell'
+  -- Get cell marker text from config (includes nerd font icon)
+  local cell_marker_text = config.options.cell_marker or ' '
   local cell_marker_width = vim.fn.strdisplaywidth(cell_marker_text)
 
   -- Hide the delimiter line if configured

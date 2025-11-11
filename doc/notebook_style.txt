@@ -103,6 +103,9 @@ Default configuration: >lua
       hide_delimiter = true,           -- Hide # %% in normal/visual modes
       hide_border_in_insert = true,    -- Hide borders in insert mode
 
+      -- Cell marker (shown when delimiter is hidden)
+      cell_marker = ' Cell',        --  is Python nerd font icon
+
       -- Cell width configuration
       cell_width_percentage = 80,      -- Cell width as % of window
       min_cell_width = 40,             -- Minimum cell width
@@ -120,6 +123,23 @@ Available border styles:
   - 'solid': Standard box drawing characters (default)
   - 'dashed': Dashed box drawing characters
   - 'double': Double-line box drawing characters
+
+                                        *notebook_style-cell-marker*
+Cell Marker~
+
+Customize the text shown when # %% delimiters are hidden: >lua
+    -- With Python nerd font icon (requires Nerd Font)
+    cell_marker = ' Cell'  --  is Python icon
+
+    -- Other examples
+    cell_marker = '📘 Cell'    -- Book emoji
+    cell_marker = '▶ Cell'     -- Play icon
+    cell_marker = '# Cell'     -- Simple hash
+    cell_marker = ''          -- Just the Python icon
+<
+
+Note: Nerd font icons require a Nerd Font to be installed.
+See: https://www.nerdfonts.com/
 
                                             *notebook_style-cell-width*
 Cell Width~

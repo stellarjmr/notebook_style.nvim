@@ -18,6 +18,8 @@ All notable changes to this project will be documented in this file.
 - Percentage-based cell width configuration (default 80% of window width)
 - Min/max cell width constraints
 - All cells rendered with consistent width
+- Customizable cell marker with Python nerd font icon by default
+- Cell marker configuration option for personalization
 
 ### Fixed
 - Compatibility with Neovim 0.11.5 by removing unsupported extmark parameters
