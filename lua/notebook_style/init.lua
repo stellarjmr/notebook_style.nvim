@@ -6,11 +6,18 @@ local render = require('notebook_style.render')
 
 -- State management
 M.enabled_buffers = {}
+M.manual_render_visible = {}  -- Track if manual rendering is currently visible
 
 --- Update cell rendering for a buffer
 --- @param bufnr number Buffer number
 local function update_cells(bufnr)
   if not M.enabled_buffers[bufnr] then
+    return
+  end
+
+  -- In manual render mode, only render if explicitly visible
+  if config.options.manual_render and not M.manual_render_visible[bufnr] then
+    render.clear(bufnr)
     return
   end
 
@@ -43,16 +50,7 @@ function M.enable(bufnr)
   -- Set up autocommands for this buffer
   local group = vim.api.nvim_create_augroup('NotebookStyle_' .. bufnr, { clear = true })
 
-  -- Update on text changes
-  vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'TextChangedP' }, {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      update_cells(bufnr)
-    end,
-  })
-
-  -- Update on mode changes
+  -- Always handle mode changes to show/hide borders appropriately
   vim.api.nvim_create_autocmd('ModeChanged', {
     group = group,
     buffer = bufnr,
@@ -61,23 +59,35 @@ function M.enable(bufnr)
     end,
   })
 
-  -- Update when entering the buffer
-  vim.api.nvim_create_autocmd('BufEnter', {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      update_cells(bufnr)
-    end,
-  })
+  -- Only set up auto-update autocommands if manual_render is disabled
+  if not config.options.manual_render then
+    -- Update on text changes
+    vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'TextChangedP' }, {
+      group = group,
+      buffer = bufnr,
+      callback = function()
+        update_cells(bufnr)
+      end,
+    })
 
-  -- Update when window is resized
-  vim.api.nvim_create_autocmd('VimResized', {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      update_cells(bufnr)
-    end,
-  })
+    -- Update when entering the buffer
+    vim.api.nvim_create_autocmd('BufEnter', {
+      group = group,
+      buffer = bufnr,
+      callback = function()
+        update_cells(bufnr)
+      end,
+    })
+
+    -- Update when window is resized
+    vim.api.nvim_create_autocmd('VimResized', {
+      group = group,
+      buffer = bufnr,
+      callback = function()
+        update_cells(bufnr)
+      end,
+    })
+  end
 
   -- Clean up on buffer delete
   vim.api.nvim_create_autocmd('BufDelete', {
@@ -88,8 +98,10 @@ function M.enable(bufnr)
     end,
   })
 
-  -- Initial render
-  update_cells(bufnr)
+  -- Initial render only if manual_render is disabled
+  if not config.options.manual_render then
+    update_cells(bufnr)
+  end
 end
 
 --- Disable the plugin for a buffer
@@ -102,6 +114,7 @@ function M.disable(bufnr)
   end
 
   M.enabled_buffers[bufnr] = nil
+  M.manual_render_visible[bufnr] = nil
   render.clear(bufnr)
 
   -- Clear autocommands
@@ -120,6 +133,44 @@ function M.toggle(bufnr)
     M.disable(bufnr)
   else
     M.enable(bufnr)
+  end
+end
+
+--- Manually render cells for the current buffer
+--- Useful when manual_render is enabled
+--- @param bufnr number Buffer number
+function M.render(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+
+  -- Enable the buffer if not already enabled
+  if not M.enabled_buffers[bufnr] then
+    M.enable(bufnr)
+  end
+
+  -- Mark as visible and render cells
+  M.manual_render_visible[bufnr] = true
+  update_cells(bufnr)
+end
+
+--- Toggle manual rendering for the current buffer
+--- @param bufnr number Buffer number
+function M.toggle_render(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+
+  -- Enable the buffer if not already enabled
+  if not M.enabled_buffers[bufnr] then
+    M.enable(bufnr)
+  end
+
+  -- Toggle visibility state
+  M.manual_render_visible[bufnr] = not M.manual_render_visible[bufnr]
+
+  if M.manual_render_visible[bufnr] then
+    -- Show rendering
+    update_cells(bufnr)
+  else
+    -- Hide rendering
+    render.clear(bufnr)
   end
 end
 
@@ -148,6 +199,19 @@ function M.setup(opts)
   vim.api.nvim_create_user_command('NotebookStyleToggle', function()
     M.toggle()
   end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleRender', function()
+    M.render()
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleToggleRender', function()
+    M.toggle_render()
+  end, {})
+
+  -- Set up keybinding for manual render toggle
+  vim.keymap.set('n', '<leader>rs', function()
+    M.toggle_render()
+  end, { desc = 'Toggle notebook cell rendering', silent = true })
 end
 
 return M

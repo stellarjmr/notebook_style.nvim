@@ -74,6 +74,8 @@ print(result)
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
 - `:NotebookStyleDisable` - Disable the plugin for current buffer
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
+- `:NotebookStyleRender` - Manually render cells (useful with `manual_render` option)
+- `:NotebookStyleToggleRender` - Toggle cell rendering on/off (useful with `manual_render` option)
 
 ### Readability Tips
 
@@ -101,6 +103,7 @@ require('notebook_style').setup({
   -- Visibility options
   hide_delimiter = true,           -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,    -- Hide borders in insert mode
+  manual_render = false,           -- If true, cells only render on <leader>rs
 
   -- Cell marker (shown when delimiter is hidden)
   cell_marker = ' Cell',        --  is Python nerd font icon
@@ -113,6 +116,29 @@ require('notebook_style').setup({
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
 })
+```
+
+### Manual Rendering Mode
+
+By default, cells render automatically as you type and move around. For better performance or more control, you can enable manual rendering:
+
+```lua
+require('notebook_style').setup({
+  manual_render = true,  -- Cells won't render automatically
+})
+```
+
+With manual rendering enabled:
+- Cells don't render automatically on text changes
+- Press `<leader>rs` to toggle cell rendering on/off
+- Mode changes (insert/normal) still work correctly
+- Use `:NotebookStyleToggleRender` command as an alternative
+
+**Keybinding**: The plugin automatically sets up `<leader>rs` for toggling. You can customize it:
+
+```lua
+-- After setup, override the default keybinding
+vim.keymap.set('n', '<leader>nc', '<cmd>NotebookStyleToggleRender<cr>', { desc = 'Toggle cell rendering' })
 ```
 
 ### Custom Border Styles

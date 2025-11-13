@@ -56,6 +56,10 @@ M.defaults = {
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
+
+  -- Manual render mode - if true, cells won't render automatically
+  -- Use the render command or keybinding to render on demand
+  manual_render = false,
 }
 
 M.options = {}
