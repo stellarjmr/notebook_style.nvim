@@ -13,7 +13,7 @@ test_*.lua
 *.test.lua
 
 # Development files
-CLAUDE.md
+AGENTS.md
 test_plugin.md
 
 # IDE

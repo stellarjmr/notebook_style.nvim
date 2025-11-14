@@ -33,11 +33,13 @@ end
 --- @param show_borders boolean Whether to show borders
 --- @param show_delimiter boolean Whether to show delimiter
 --- @param frame_width number Baseline frame width (cells grow to fit longer lines)
-function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width)
+--- @param cell_number number Cell number for display
+function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
   local chars = get_border_chars()
 
-  -- Get cell marker text from config (includes nerd font icon)
-  local cell_marker_text = config.options.cell_marker or ' '
+  -- Get cell marker text from config (includes nerd font icon) and add cell number
+  local base_marker = config.options.cell_marker or ' '
+  local cell_marker_text = base_marker .. '#' .. tostring(cell_number)
   local cell_marker_width = vim.fn.strdisplaywidth(cell_marker_text)
 
   -- Hide the delimiter line if configured
@@ -185,8 +187,8 @@ function M.render_all(bufnr, cells, mode)
   -- Apply min/max constraints
   local standard_frame_width = math.max(min_width, math.min(calculated_width, max_width))
 
-  for _, cell in ipairs(cells) do
-    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width)
+  for i, cell in ipairs(cells) do
+    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i)
   end
 end
 
