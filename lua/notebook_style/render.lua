@@ -94,23 +94,14 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
 
   -- Top border - add it as a virtual line above the cell
   local top_border = make_border_line(cell_frame_width, chars.top_left, chars.horizontal, chars.top_right)
-  if cell.start_line > 0 then
-    -- Add top border above the cell (on the line before)
-    vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line - 1, 0, {
-      virt_lines = {
-        { { top_border, 'NotebookCellBorder' } },
-      },
-      virt_lines_above = true,
-    })
-  else
-    -- For first line in buffer, add virtual line above
-    vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
-      virt_lines = {
-        { { top_border, 'NotebookCellBorder' } },
-      },
-      virt_lines_above = true,
-    })
-  end
+  -- Always anchor at the delimiter line and place above it so the border sits
+  -- directly on top of the cell even at the top of the buffer.
+  vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
+    virt_lines = {
+      { { top_border, 'NotebookCellBorder' } },
+    },
+    virt_lines_above = true,
+  })
 
   -- Side borders for each line in the cell
   for line = cell.start_line, cell.end_line do
@@ -154,7 +145,6 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     virt_lines = {
       { { bottom_border, 'NotebookCellBorder' } },
     },
-    virt_lines_above = false,
   })
 end
 
