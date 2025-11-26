@@ -100,6 +100,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       virt_lines = {
         { { top_border, 'NotebookCellBorder' } },
       },
+      virt_lines_above = true,
     })
   else
     -- For first line in buffer, add virtual line above
@@ -107,6 +108,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       virt_lines = {
         { { top_border, 'NotebookCellBorder' } },
       },
+      virt_lines_above = true,
     })
   end
 
@@ -152,6 +154,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     virt_lines = {
       { { bottom_border, 'NotebookCellBorder' } },
     },
+    virt_lines_above = false,
   })
 end
 
