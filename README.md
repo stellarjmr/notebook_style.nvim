@@ -79,8 +79,7 @@ print(result)
 
 ### Readability Tips
 
-- For the very first line in a file, add a lightweight header such as `#!/usr/bin/env python3` or even a single space-only line. This gives the top border a clean surface to attach to and keeps the “Cell” label tidy.
-- Add a space-only line (or any throwaway whitespace) at the very end of the file so the bottom border renders crisply without needing to modify your actual code.
+- The boundary lines of the first and last rows may be hidden by the buffer. Scroll to the top/bottom of the page to display them.
 
 ## Configuration
 
