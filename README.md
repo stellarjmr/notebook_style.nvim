@@ -6,6 +6,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 ## Features
 
 - **Visual Cell Borders**: Cells are enclosed with solid, dashed, or double borders on all sides
+- **Cell Names**: Display custom cell names from delimiters (e.g., `# %% My Cell Name`)
 - **Smart Visibility**:
   - Hides `# %%` delimiters in normal and visual modes (shows subtle cell marker)
   - Hides cell borders in insert mode for distraction-free editing
@@ -55,19 +56,25 @@ The plugin automatically activates for Python files when you have `# %%` cell de
 ### Cell Delimiter Format
 
 ```python
-# %%
-# This is the first cell
+# %% Data Loading
+# This cell loads and prepares data
 import numpy as np
 print("Hello from cell 1")
 
-# %%
-# This is the second cell
+# %% Processing
+# This cell processes the data
 def my_function():
     return 42
 
 result = my_function()
 print(result)
+
+# %%
+# Cells without names work too
+print("Unnamed cell")
 ```
+
+Cell names (text after `# %%`) are automatically extracted and displayed in the cell marker.
 
 ### Commands
 
@@ -105,7 +112,15 @@ require('notebook_style').setup({
   manual_render = false,           -- If true, cells only render on <leader>rs
 
   -- Cell marker (shown when delimiter is hidden)
-  cell_marker = ' Cell',        --  is Python nerd font icon
+  cell_marker = ' ',              -- Python nerd font icon
+
+  -- Cell name display options
+  show_cell_name = true,           -- Show cell name from delimiter (e.g., "# %% My Cell")
+  show_cell_number = true,         -- Show cell number in the label
+  cell_name_pattern = '^#%s*%%%%%s*(.-)%s*$',  -- Pattern to extract cell name
+  cell_name_max_length = 40,       -- Max length for cell name (nil to disable)
+  cell_label_format_named = '{icon}#{number} {name}',    -- Format with name
+  cell_label_format_unnamed = '{icon}#{number}',         -- Format without name
 
   -- Cell width configuration
   cell_width_percentage = 80,      -- Cell width as % of window width (1-100)

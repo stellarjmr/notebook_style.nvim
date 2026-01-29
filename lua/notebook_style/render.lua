@@ -27,6 +27,38 @@ local function make_border_line(width, left, middle, right)
   return left .. string.rep(middle, width - 2) .. right
 end
 
+--- Build a cell label string from cell data and number
+--- @param cell table Cell with optional name field
+--- @param cell_number number Cell number for display
+--- @return string Formatted cell label
+local function build_cell_label(cell, cell_number)
+  local icon = config.options.cell_marker or ''
+  local show_name = config.options.show_cell_name and cell.name
+  local show_number = config.options.show_cell_number
+
+  local name = cell.name
+  if name and config.options.cell_name_max_length then
+    local max_len = config.options.cell_name_max_length
+    if vim.fn.strdisplaywidth(name) > max_len then
+      name = vim.fn.strcharpart(name, 0, max_len - 1) .. '…'
+    end
+  end
+
+  local format_str
+  if show_name then
+    format_str = config.options.cell_label_format_named or '{icon}#{number} {name}'
+  else
+    format_str = config.options.cell_label_format_unnamed or '{icon}#{number}'
+  end
+
+  local label = format_str
+    :gsub('{icon}', icon)
+    :gsub('{number}', show_number and tostring(cell_number) or '')
+    :gsub('{name}', name or '')
+
+  return label
+end
+
 --- Render a cell border
 --- @param bufnr number Buffer number
 --- @param cell table Cell with start_line and end_line
@@ -37,9 +69,8 @@ end
 function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
   local chars = get_border_chars()
 
-  -- Get cell marker text from config (includes nerd font icon) and add cell number
-  local base_marker = config.options.cell_marker or ' '
-  local cell_marker_text = base_marker .. '#' .. tostring(cell_number)
+  -- Build cell label with optional name
+  local cell_marker_text = build_cell_label(cell, cell_number)
   local cell_marker_width = vim.fn.strdisplaywidth(cell_marker_text)
 
   -- Hide the delimiter line if configured

@@ -1,4 +1,5 @@
 local M = {}
+local config = require('notebook_style.config')
 
 --- Find all cell delimiters in the buffer
 --- @param bufnr number Buffer number
@@ -58,10 +59,22 @@ function M.get_cells(bufnr, delimiters, total_lines)
       end
     end
 
+    -- Extract cell name from delimiter line
+    local delimiter_content = all_lines[start_line + 1] or ''
+    local name = nil
+    if config.options.show_cell_name then
+      local pattern = config.options.cell_name_pattern or '^#%s*%%%%%s*(.-)%s*$'
+      local captured = delimiter_content:match(pattern)
+      if captured and vim.trim(captured) ~= '' then
+        name = vim.trim(captured)
+      end
+    end
+
     table.insert(cells, {
       delimiter = start_line,
       start_line = start_line,
       end_line = end_line,
+      name = name,
     })
   end
 

@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.1.0
+Version: 0.2.0
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -22,6 +22,7 @@ notebook_style.nvim is a Neovim plugin that renders Python file cells
 
 Features:
   - Visual cell borders on all four sides
+  - Cell names displayed from delimiters (e.g., # %% My Cell Name)
   - Smart visibility (hides delimiters in normal mode, hides borders in insert)
   - Fully customizable colors and border styles
   - Non-intrusive rendering using native extmarks
@@ -54,18 +55,25 @@ Using packer.nvim: >lua
 The plugin automatically activates for Python files with # %% delimiters.
 
 Cell format: >python
-    # %%
-    # This is a cell
+    # %% Data Loading
+    # This is a cell with a name
     import numpy as np
     print("Hello")
 
-    # %%
-    # Another cell
+    # %% Processing
+    # Another cell with a name
     x = [1, 2, 3]
+
+    # %%
+    # Cell without a name
+    y = x * 2
 <
 
 The plugin will render borders around each cell, hiding the # %% delimiters
 in normal/visual modes and showing them in insert mode.
+
+Cell names (text after # %%) are automatically extracted and displayed in the
+cell marker (e.g., " #1 Data Loading").
 
 ==============================================================================
 4. COMMANDS                                         *notebook_style-commands*
@@ -104,7 +112,15 @@ Default configuration: >lua
       hide_border_in_insert = true,    -- Hide borders in insert mode
 
       -- Cell marker (shown when delimiter is hidden)
-      cell_marker = ' Cell',        --  is Python nerd font icon
+      cell_marker = ' ',              -- Python nerd font icon
+
+      -- Cell name display options
+      show_cell_name = true,           -- Show cell name from delimiter
+      show_cell_number = true,         -- Show cell number in label
+      cell_name_pattern = '^#%s*%%%%%s*(.-)%s*$',  -- Pattern to extract name
+      cell_name_max_length = 40,       -- Max length for cell name
+      cell_label_format_named = '{icon}#{number} {name}',    -- With name
+      cell_label_format_unnamed = '{icon}#{number}',         -- Without name
 
       -- Cell width configuration
       cell_width_percentage = 80,      -- Cell width as % of window
@@ -140,6 +156,36 @@ Customize the text shown when # %% delimiters are hidden: >lua
 
 Note: Nerd font icons require a Nerd Font to be installed.
 See: https://www.nerdfonts.com/
+
+                                            *notebook_style-cell-name*
+Cell Names~
+
+Display cell names extracted from delimiter lines. When you write: >python
+    # %% My Cell Name
+<
+The plugin will display " #1 My Cell Name" instead of just " #1".
+
+Configuration options:
+  - show_cell_name: Enable/disable cell name display (default: true)
+  - show_cell_number: Enable/disable cell number display (default: true)
+  - cell_name_pattern: Lua pattern to extract cell name from delimiter
+  - cell_name_max_length: Maximum display length (default: 40)
+  - cell_label_format_named: Format string when cell has a name
+  - cell_label_format_unnamed: Format string when cell has no name
+
+Format placeholders:
+  - {icon}: The cell_marker icon
+  - {number}: The cell number
+  - {name}: The extracted cell name
+
+Examples: >lua
+    -- Show only name, no number
+    cell_label_format_named = '{icon}{name}'
+    cell_label_format_unnamed = '{icon}Unnamed'
+
+    -- Custom format
+    cell_label_format_named = 'Cell {number}: {name}'
+<
 
                                             *notebook_style-cell-width*
 Cell Width~

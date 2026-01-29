@@ -47,7 +47,15 @@ M.defaults = {
 
   -- Cell marker (shown when delimiter is hidden)
   -- Use a nerd font icon for a nice visual indicator
-  cell_marker = ' ',  --  is the Python nerd font icon
+  cell_marker = ' ',  --  is the Python nerd font icon
+
+  -- Cell name display options
+  show_cell_name = true,  -- Show cell name extracted from delimiter (e.g., "# %% My Cell Name")
+  show_cell_number = true,  -- Show cell number in the label
+  cell_name_pattern = '^#%s*%%%%%s*(.-)%s*$',  -- Pattern to extract cell name (capture group)
+  cell_name_max_length = 40,  -- Maximum length for cell name display (nil to disable)
+  cell_label_format_named = '{icon}#{number} {name}',  -- Format when cell has a name
+  cell_label_format_unnamed = '{icon}#{number}',  -- Format when cell has no name
 
   -- Frame width configuration
   cell_width_percentage = 80,  -- Cell width as percentage of window width (1-100)

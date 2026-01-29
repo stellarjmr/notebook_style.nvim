@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-01-29
+
+### Added
+- **Cell Names**: Extract and display cell names from delimiter lines (e.g., `# %% My Cell Name`)
+- New configuration options for cell name display:
+  - `show_cell_name`: Toggle cell name display (default: true)
+  - `show_cell_number`: Toggle cell number display (default: true)
+  - `cell_name_pattern`: Lua pattern to extract cell names
+  - `cell_name_max_length`: Maximum length for cell name display
+  - `cell_label_format_named`: Format string for cells with names
+  - `cell_label_format_unnamed`: Format string for cells without names
+- Customizable label format with `{icon}`, `{number}`, and `{name}` placeholders
+
+### Changed
+- Updated example.py to demonstrate cell names feature
+- Improved documentation in README.md
+
 ## [0.1.0] - 2025-11-11
 
 ### Added
