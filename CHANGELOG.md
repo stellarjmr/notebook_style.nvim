@@ -15,6 +15,10 @@ All notable changes to this project will be documented in this file.
   - `cell_label_format_unnamed`: Format string for cells without names
 - Customizable label format with `{icon}`, `{number}`, and `{name}` placeholders
 
+### Fixed
+- Fixed extra 1-character gap between text and line beginning on empty lines
+- Fixed conflict with snacks.nvim indent plugin (indentation shift issue)
+
 ### Changed
 - Updated example.py to demonstrate cell names feature
 - Improved documentation in README.md

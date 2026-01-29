@@ -120,8 +120,8 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
   end
 
   -- Guarantee the frame is wide enough for the current cell:
-  -- left border + space + content + eol anchor + right border.
-  local cell_frame_width = math.max(frame_width, max_line_width + 4)
+  -- left border + content + eol anchor + right border.
+  local cell_frame_width = math.max(frame_width, max_line_width + 3)
 
   -- Top border - add it as a virtual line above the cell
   local top_border = make_border_line(cell_frame_width, chars.top_left, chars.horizontal, chars.top_right)
@@ -139,14 +139,14 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local line_width = line_widths[line] or 0
 
     -- Calculate padding so the right border lines up with the top/bottom corners.
-    -- Layout: │ + space + content + (EOL anchor) + padding + │ = cell_frame_width,
-    -- so padding = cell_frame_width - line_width - 4.
-    local padding_needed = cell_frame_width - line_width - 4
+    -- Layout: │ + content + (EOL anchor) + padding + │ = cell_frame_width,
+    -- so padding = cell_frame_width - line_width - 3.
+    local padding_needed = cell_frame_width - line_width - 3
     local padding = string.rep(' ', math.max(0, padding_needed))
 
-    -- Left border (inline at start of line)
+    -- Left border (inline at start of line, no trailing space to avoid cursor gap)
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-      virt_text = { { chars.vertical .. ' ', 'NotebookCellBorder' } },
+      virt_text = { { chars.vertical, 'NotebookCellBorder' } },
       virt_text_pos = 'inline',
       priority = 200,
     })
