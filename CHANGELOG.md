@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-02-09
+
+### Fixed
+- Skip rendering vertical (side) borders when `vertical` char is empty or whitespace-only, eliminating the extra gap/indentation at the start of each line (fixes #4)
+
 ## [0.2.0] - 2026-01-29
 
 ### Added

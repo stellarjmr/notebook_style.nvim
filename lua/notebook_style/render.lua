@@ -59,6 +59,13 @@ local function build_cell_label(cell, cell_number)
   return label
 end
 
+--- Check if a string is blank (nil, empty, or whitespace-only)
+--- @param s string|nil
+--- @return boolean
+local function is_blank(s)
+  return s == nil or s:match('^%s*$') ~= nil
+end
+
 --- Render a cell border
 --- @param bufnr number Buffer number
 --- @param cell table Cell with start_line and end_line
@@ -68,6 +75,7 @@ end
 --- @param cell_number number Cell number for display
 function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
   local chars = get_border_chars()
+  local draw_vertical = not is_blank(chars.vertical)
 
   -- Build cell label with optional name
   local cell_marker_text = build_cell_label(cell, cell_number)
@@ -144,29 +152,31 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local padding_needed = cell_frame_width - line_width - 3
     local padding = string.rep(' ', math.max(0, padding_needed))
 
-    -- Left border (inline at start of line, no trailing space to avoid cursor gap)
-    vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-      virt_text = { { chars.vertical, 'NotebookCellBorder' } },
-      virt_text_pos = 'inline',
-      priority = 200,
-    })
-
-    if line == cell.delimiter and not show_delimiter then
-      -- Place the delimiter row's right border exactly under the corner, even
-      -- though the line itself is concealed (so there is no real EOL to anchor to).
+    if draw_vertical then
+      -- Left border (inline at start of line, no trailing space to avoid cursor gap)
       vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
         virt_text = { { chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'overlay',
-        virt_text_win_col = math.max(0, cell_frame_width - 1),
+        virt_text_pos = 'inline',
         priority = 200,
       })
-    else
-      -- Right border with padding (at end of line) - no extra space before │
-      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-        virt_text = { { padding .. chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'eol',
-        priority = 200,
-      })
+
+      if line == cell.delimiter and not show_delimiter then
+        -- Place the delimiter row's right border exactly under the corner, even
+        -- though the line itself is concealed (so there is no real EOL to anchor to).
+        vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+          virt_text = { { chars.vertical, 'NotebookCellBorder' } },
+          virt_text_pos = 'overlay',
+          virt_text_win_col = math.max(0, cell_frame_width - 1),
+          priority = 200,
+        })
+      else
+        -- Right border with padding (at end of line) - no extra space before │
+        vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+          virt_text = { { padding .. chars.vertical, 'NotebookCellBorder' } },
+          virt_text_pos = 'eol',
+          priority = 200,
+        })
+      end
     end
   end
 
