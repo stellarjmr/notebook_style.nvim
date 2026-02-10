@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-02-10
+
+### Fixed
+- Fixed cursor position on empty lines inside cells: cursor now aligns with code lines instead of sitting on the border character (fixes #4)
+
 ## [0.2.0] - 2026-01-29
 
 ### Added
