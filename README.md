@@ -186,10 +186,6 @@ require('notebook_style').setup({
 })
 ```
 
-> **Tip:** Set `vertical = ''` (empty string) to disable side borders entirely.
-> This removes the left/right border characters and avoids any extra indentation
-> that inline virtual text would otherwise add.
-
 ### Color Customization
 
 You can use hex colors or link to existing highlight groups:
