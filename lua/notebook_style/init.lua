@@ -7,50 +7,16 @@ local render = require('notebook_style.render')
 -- State management
 M.enabled_buffers = {}
 M.manual_render_visible = {}  -- Track if manual rendering is currently visible
-M._saved_virtualedit = {}  -- Track original virtualedit per window
-
---- Enable virtualedit for a window, saving the original value
---- @param winid number Window ID
-local function enable_virtualedit(winid)
-  if not M._saved_virtualedit[winid] then
-    M._saved_virtualedit[winid] = vim.api.nvim_get_option_value('virtualedit', { win = winid })
-  end
-  vim.api.nvim_set_option_value('virtualedit', 'all', { win = winid })
-end
-
---- Restore virtualedit for a window
---- @param winid number Window ID
-local function restore_virtualedit(winid)
-  local saved = M._saved_virtualedit[winid]
-  if saved then
-    vim.api.nvim_set_option_value('virtualedit', saved, { win = winid })
-    M._saved_virtualedit[winid] = nil
-  end
-end
-
---- Nudge cursor off the left border on empty lines inside cells
---- @param bufnr number Buffer number
-local function adjust_cursor_on_empty_line(bufnr)
-  if not M.enabled_buffers[bufnr] then
-    return
-  end
-  local win = vim.api.nvim_get_current_win()
-  local cursor = vim.api.nvim_win_get_cursor(win)
-  local row0 = cursor[1] - 1
-  local col = cursor[2]
-  if col > 0 then
-    return
-  end
-  local line = vim.api.nvim_buf_get_lines(bufnr, row0, row0 + 1, false)[1] or ''
-  if #line == 0 then
-    vim.api.nvim_win_set_cursor(win, { cursor[1], 1 })
-  end
-end
 
 --- Update cell rendering for a buffer
 --- @param bufnr number Buffer number
 local function update_cells(bufnr)
   if not M.enabled_buffers[bufnr] then
+    return
+  end
+
+  -- Skip if render module is doing an internal buffer edit (placeholder management)
+  if render._internal_edit then
     return
   end
 
@@ -86,31 +52,8 @@ function M.enable(bufnr)
 
   M.enabled_buffers[bufnr] = true
 
-  -- Enable virtualedit so the cursor can sit after the inline border on empty lines
-  local winid = vim.api.nvim_get_current_win()
-  enable_virtualedit(winid)
-
   -- Set up autocommands for this buffer
   local group = vim.api.nvim_create_augroup('NotebookStyle_' .. bufnr, { clear = true })
-
-  -- Nudge cursor past the left border on empty lines
-  vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI' }, {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      adjust_cursor_on_empty_line(bufnr)
-    end,
-  })
-
-  -- Ensure virtualedit is set when entering a window showing this buffer
-  vim.api.nvim_create_autocmd('BufEnter', {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      enable_virtualedit(vim.api.nvim_get_current_win())
-      update_cells(bufnr)
-    end,
-  })
 
   -- Always handle mode changes to show/hide borders appropriately
   vim.api.nvim_create_autocmd('ModeChanged', {
@@ -132,6 +75,15 @@ function M.enable(bufnr)
       end,
     })
 
+    -- Update when entering the buffer
+    vim.api.nvim_create_autocmd('BufEnter', {
+      group = group,
+      buffer = bufnr,
+      callback = function()
+        update_cells(bufnr)
+      end,
+    })
+
     -- Update when window is resized
     vim.api.nvim_create_autocmd('VimResized', {
       group = group,
@@ -141,6 +93,15 @@ function M.enable(bufnr)
       end,
     })
   end
+
+  -- Remove placeholder spaces before writing so the file on disk stays clean
+  vim.api.nvim_create_autocmd('BufWritePre', {
+    group = group,
+    buffer = bufnr,
+    callback = function()
+      render.clear(bufnr)
+    end,
+  })
 
   -- Re-render after writing
   vim.api.nvim_create_autocmd('BufWritePost', {
@@ -178,13 +139,6 @@ function M.disable(bufnr)
   M.enabled_buffers[bufnr] = nil
   M.manual_render_visible[bufnr] = nil
   render.clear(bufnr)
-
-  -- Restore virtualedit for all windows showing this buffer
-  for _, winid in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
-      restore_virtualedit(winid)
-    end
-  end
 
   -- Clear autocommands
   local ok, _ = pcall(vim.api.nvim_del_augroup_by_name, 'NotebookStyle_' .. bufnr)

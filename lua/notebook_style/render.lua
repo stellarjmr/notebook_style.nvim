@@ -4,10 +4,60 @@ local config = require('notebook_style.config')
 -- Namespace for extmarks
 M.ns = vim.api.nvim_create_namespace('notebook_style')
 
---- Clear all extmarks in the buffer
+-- Namespace for placeholder tracking extmarks
+M.ns_placeholder = vim.api.nvim_create_namespace('notebook_style_placeholders')
+
+-- Re-entrance guard for internal buffer edits
+M._internal_edit = false
+
+--- Perform a buffer text edit merged into the previous undo entry.
+--- Falls back to a standalone undo entry when there is nothing to join.
+--- @param bufnr number Buffer number
+--- @param srow number Start row (0-indexed)
+--- @param scol number Start column
+--- @param erow number End row (0-indexed)
+--- @param ecol number End column
+--- @param repl table Replacement lines
+local function buf_set_text_joined(bufnr, srow, scol, erow, ecol, repl)
+  vim.api.nvim_buf_call(bufnr, function()
+    pcall(vim.cmd, 'undojoin')
+    vim.api.nvim_buf_set_text(0, srow, scol, erow, ecol, repl)
+  end)
+end
+
+--- Remove all placeholder spaces from the buffer and clear placeholder extmarks
+--- @param bufnr number Buffer number
+local function remove_placeholders(bufnr)
+  local marks = vim.api.nvim_buf_get_extmarks(bufnr, M.ns_placeholder, 0, -1, { details = true })
+  if #marks == 0 then
+    return
+  end
+
+  local was_modified = vim.bo[bufnr].modified
+
+  for _, mark in ipairs(marks) do
+    local row = mark[2]
+    local col = mark[3]
+    local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ''
+    if col < #line then
+      local ch = line:sub(col + 1, col + 1)
+      if ch == ' ' then
+        buf_set_text_joined(bufnr, row, col, row, col + 1, { '' })
+      end
+    end
+  end
+
+  vim.api.nvim_buf_clear_namespace(bufnr, M.ns_placeholder, 0, -1)
+  vim.bo[bufnr].modified = was_modified
+end
+
+--- Clear all extmarks in the buffer and remove placeholders
 --- @param bufnr number Buffer number
 function M.clear(bufnr)
+  M._internal_edit = true
+  remove_placeholders(bufnr)
   vim.api.nvim_buf_clear_namespace(bufnr, M.ns, 0, -1)
+  M._internal_edit = false
 end
 
 --- Get border characters based on configuration
@@ -59,6 +109,25 @@ local function build_cell_label(cell, cell_number)
   return label
 end
 
+--- Insert a placeholder space on an empty line so the cursor has an anchor
+--- point after inline virtual text.
+--- @param bufnr number Buffer number
+--- @param line number 0-indexed line number
+local function add_placeholder(bufnr, line)
+  local was_modified = vim.bo[bufnr].modified
+
+  buf_set_text_joined(bufnr, line, 0, line, 0, { ' ' })
+
+  vim.api.nvim_buf_set_extmark(bufnr, M.ns_placeholder, line, 0, {
+    end_row = line,
+    end_col = 1,
+    right_gravity = true,
+    end_right_gravity = true,
+  })
+
+  vim.bo[bufnr].modified = was_modified
+end
+
 --- Render a cell border
 --- @param bufnr number Buffer number
 --- @param cell table Cell with start_line and end_line
@@ -98,6 +167,20 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     return
   end
 
+  -- Insert placeholder spaces on empty lines within the cell so the cursor
+  -- lands after the left border character instead of on top of it.
+  -- Must happen before width computation so we can treat placeholders as 0-width.
+  M._internal_edit = true
+  local placeholder_lines = {}
+  for line = cell.start_line, cell.end_line do
+    local content = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1] or ''
+    if #content == 0 then
+      add_placeholder(bufnr, line)
+      placeholder_lines[line] = true
+    end
+  end
+  M._internal_edit = false
+
   -- Precompute visible widths for each line in the cell so we can adjust the
   -- frame if a line is longer than the standard width.
   local line_widths = {}
@@ -107,7 +190,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local line_content = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1] or ''
 
     local line_width
-    if #line_content == 0 then
+    if placeholder_lines[line] then
       line_width = 0
     elseif line == cell.delimiter and not show_delimiter then
       line_width = cell_marker_width
@@ -152,6 +235,15 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       virt_text_pos = 'inline',
       priority = 200,
     })
+
+    -- Conceal the placeholder space so it is invisible but still anchors the cursor
+    if placeholder_lines[line] then
+      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+        end_row = line,
+        end_col = 1,
+        conceal = '',
+      })
+    end
 
     if line == cell.delimiter and not show_delimiter then
       -- Place the delimiter row's right border exactly under the corner, even
