@@ -15,11 +15,6 @@ local function update_cells(bufnr)
     return
   end
 
-  -- Skip if render module is doing an internal buffer edit (placeholder management)
-  if render._internal_edit then
-    return
-  end
-
   -- In manual render mode, only render if explicitly visible
   if config.options.manual_render and not M.manual_render_visible[bufnr] then
     render.clear(bufnr)
@@ -93,15 +88,6 @@ function M.enable(bufnr)
       end,
     })
   end
-
-  -- Remove placeholder spaces before writing so the file on disk stays clean
-  vim.api.nvim_create_autocmd('BufWritePre', {
-    group = group,
-    buffer = bufnr,
-    callback = function()
-      render.clear(bufnr)
-    end,
-  })
 
   -- Re-render after writing
   vim.api.nvim_create_autocmd('BufWritePost', {
