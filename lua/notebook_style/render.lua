@@ -102,7 +102,6 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
   -- frame if a line is longer than the standard width.
   local line_widths = {}
   local max_line_width = 0
-  local empty_lines = {}
 
   for line = cell.start_line, cell.end_line do
     local line_content = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1] or ''
@@ -110,7 +109,6 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local line_width
     if #line_content == 0 then
       line_width = 0
-      empty_lines[line] = true
     elseif line == cell.delimiter and not show_delimiter then
       line_width = cell_marker_width
     else
@@ -143,31 +141,17 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local line_width = line_widths[line] or 0
 
     -- Calculate padding so the right border lines up with the top/bottom corners.
-    -- Non-empty lines layout: │(inline,1col) + content + (EOL anchor) + padding + │ = cell_frame_width
-    -- Empty lines layout: │(overlay,0col) + padding + │ = cell_frame_width
-    local padding_needed
-    if empty_lines[line] then
-      padding_needed = cell_frame_width - line_width - 2
-    else
-      padding_needed = cell_frame_width - line_width - 3
-    end
+    -- Layout: │ + content + (EOL anchor) + padding + │ = cell_frame_width,
+    -- so padding = cell_frame_width - line_width - 3.
+    local padding_needed = cell_frame_width - line_width - 3
     local padding = string.rep(' ', math.max(0, padding_needed))
 
-    -- Left border
-    if empty_lines[line] then
-      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-        virt_text = { { chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'overlay',
-        virt_text_win_col = 0,
-        priority = 200,
-      })
-    else
-      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-        virt_text = { { chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'inline',
-        priority = 200,
-      })
-    end
+    -- Left border (inline at start of line)
+    vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+      virt_text = { { chars.vertical, 'NotebookCellBorder' } },
+      virt_text_pos = 'inline',
+      priority = 200,
+    })
 
     if line == cell.delimiter and not show_delimiter then
       -- Place the delimiter row's right border exactly under the corner, even
