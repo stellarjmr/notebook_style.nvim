@@ -143,9 +143,14 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     local line_width = line_widths[line] or 0
 
     -- Calculate padding so the right border lines up with the top/bottom corners.
-    -- Layout: │ + content + (EOL anchor) + padding + │ = cell_frame_width,
-    -- so padding = cell_frame_width - line_width - 3.
-    local padding_needed = cell_frame_width - line_width - 3
+    -- Non-empty lines layout: │(inline,1col) + content + (EOL anchor) + padding + │ = cell_frame_width
+    -- Empty lines layout: │(overlay,0col) + padding + │ = cell_frame_width
+    local padding_needed
+    if empty_lines[line] then
+      padding_needed = cell_frame_width - line_width - 2
+    else
+      padding_needed = cell_frame_width - line_width - 3
+    end
     local padding = string.rep(' ', math.max(0, padding_needed))
 
     -- Left border
