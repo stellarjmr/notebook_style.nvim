@@ -17,18 +17,73 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 
 ## Installation
 
+The core cell-border rendering works with a normal plugin install. Inline execution needs the optional Rust backend; install it with your plugin manager hook or by running `:NotebookStyleDownloadBackend`.
+
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
+
+Render-only setup:
 
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
   ft = 'python',  -- Load only for Python files
+  opts = {},
+}
+```
+
+With the inline execution backend installer:
+
+```lua
+{
+  'stellarjmr/notebook_style.nvim',
+  version = 'v0.3.3',
+  ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
     install.run(plugin)
   end,
   opts = {},
 }
+```
+
+### Using `vim.pack` (Neovim 0.12+)
+
+Render-only setup:
+
+```lua
+vim.pack.add({
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim' },
+})
+
+require('notebook_style').setup({})
+```
+
+With the inline execution backend installer, define the `PackChanged` hook before `vim.pack.add()`:
+
+```lua
+local plugin_name = 'notebook_style.nvim'
+
+vim.api.nvim_create_autocmd('PackChanged', {
+  callback = function(event)
+    local data = event.data or {}
+    local spec = data.spec or {}
+    if spec.name ~= plugin_name then
+      return
+    end
+    if data.kind ~= 'install' and data.kind ~= 'update' then
+      return
+    end
+
+    local install = loadfile(data.path .. '/lua/notebook_style/install.lua')()
+    install.run({ dir = data.path })
+  end,
+})
+
+vim.pack.add({
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.3.3' },
+})
+
+require('notebook_style').setup({})
 ```
 
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
@@ -95,7 +150,7 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 
 ### Inline Execution Backend
 
-Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the lazy.nvim build hook downloads a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain. If your plugin manager does not run build hooks, the plugin also tries the same backend install automatically on the first `:NotebookStyleRunCell` / kernel start.
+Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the install hooks above download a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
 
 Supported prebuilt targets:
 - `aarch64-apple-darwin` (Apple Silicon macOS)
@@ -108,7 +163,7 @@ Development branches, unsupported platforms, or failed downloads fall back to a 
 cargo build --release --manifest-path core/Cargo.toml
 ```
 
-You can also run `:NotebookStyleDownloadBackend` after install/update to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
+Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
 Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
 

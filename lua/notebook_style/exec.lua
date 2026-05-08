@@ -1,7 +1,6 @@
 local cells = require('notebook_style.cells')
 local config = require('notebook_style.config')
 local image = require('notebook_style.image')
-local install = require('notebook_style.install')
 local rpc = require('notebook_style.rpc')
 local state = require('notebook_style.state')
 
@@ -9,7 +8,6 @@ local M = {}
 
 local client = nil
 local session_to_buf = {}
-local attempted_backend_install = false
 local refresh = function() end
 
 function M.set_refresh(fn)
@@ -37,28 +35,11 @@ local function default_backend_cmd()
   return { root .. '/core/target/release/notebook-style-core' }
 end
 
-local function default_backend_exists()
-  local root = plugin_root()
-  return vim.fn.executable(root .. '/core/target/release/notebook-style-core') == 1
-    or vim.fn.executable(root .. '/core/target/debug/notebook-style-core') == 1
-end
-
-local function ensure_default_backend()
-  if config.options.backend_cmd or default_backend_exists() or attempted_backend_install then
-    return
-  end
-
-  attempted_backend_install = true
-  vim.notify('NotebookStyle backend missing; installing notebook-style-core...', vim.log.levels.INFO)
-  install.run({ dir = plugin_root() })
-end
-
 local function ensure_client()
   if client and client.job then
     return client
   end
 
-  ensure_default_backend()
   local cmd = config.options.backend_cmd or default_backend_cmd()
   client = rpc.spawn({
     cmd = cmd,

@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.3.2
+Version: 0.3.3
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -36,6 +36,15 @@ Using lazy.nvim: >lua
     {
       'stellarjmr/notebook_style.nvim',
       ft = 'python',
+      opts = {},
+    }
+<
+
+With the optional inline execution backend installer: >lua
+    {
+      'stellarjmr/notebook_style.nvim',
+      version = 'v0.3.3',
+      ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
         install.run(plugin)
@@ -44,9 +53,45 @@ Using lazy.nvim: >lua
     }
 <
 
-The build hook downloads a prebuilt notebook-style-core backend on supported
-tagged releases. Development branches, unsupported platforms, or failed
-downloads fall back to building core/Cargo.toml with Cargo.
+Using vim.pack on Neovim 0.12+: >lua
+    vim.pack.add({
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim' },
+    })
+
+    require('notebook_style').setup({})
+<
+
+With the optional inline execution backend installer, define the PackChanged
+autocommand before vim.pack.add(): >lua
+    local plugin_name = 'notebook_style.nvim'
+
+    vim.api.nvim_create_autocmd('PackChanged', {
+      callback = function(event)
+        local data = event.data or {}
+        local spec = data.spec or {}
+        if spec.name ~= plugin_name then
+          return
+        end
+        if data.kind ~= 'install' and data.kind ~= 'update' then
+          return
+        end
+
+        local install = loadfile(data.path .. '/lua/notebook_style/install.lua')()
+        install.run({ dir = data.path })
+      end,
+    })
+
+    vim.pack.add({
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.3.3' },
+    })
+
+    require('notebook_style').setup({})
+<
+
+The backend install hooks download a prebuilt notebook-style-core backend on
+supported tagged releases. Development branches, unsupported platforms, or
+failed downloads fall back to building core/Cargo.toml with Cargo. You can
+also run :NotebookStyleDownloadBackend manually.
 
 Using packer.nvim: >lua
     use {
