@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.3] - 2026-05-08
+
+### Changed
+- Added Neovim 0.12 `vim.pack` installation instructions, including a `PackChanged` hook for the optional backend installer.
+- Removed first-run backend auto-install from `:NotebookStyleRunCell`; use plugin-manager hooks or `:NotebookStyleDownloadBackend` explicitly.
+
 ## [0.3.2] - 2026-05-08
 
 ### Fixed
