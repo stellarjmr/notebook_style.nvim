@@ -97,7 +97,7 @@ cd core
 cargo build --release
 ```
 
-Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and image placeholders below the cell. True inline image rendering is planned; image outputs currently show as `[image/png output]` / `[image/jpeg output]` placeholders.
+Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
 
 ### Readability Tips
 

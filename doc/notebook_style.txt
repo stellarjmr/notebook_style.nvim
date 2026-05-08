@@ -94,7 +94,9 @@ cell marker (e.g., " #1 Data Loading").
                                                     *:NotebookStyleRunCell*
 :NotebookStyleRunCell
     Run the current Python cell through the Rust backend and render text output
-    below the cell. Requires building core/notebook-style-core first.
+    and image/png output below the cell. Requires building
+    core/notebook-style-core first. Ghostty/Kitty use the Kitty graphics
+    protocol; unsupported terminals show a text placeholder.
 
                                                     *:NotebookStyleKernelStart*
 :NotebookStyleKernelStart

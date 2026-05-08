@@ -1,5 +1,6 @@
 local M = {}
 local config = require('notebook_style.config')
+local image = require('notebook_style.image')
 local state = require('notebook_style.state')
 
 -- Namespace for extmarks
@@ -113,6 +114,20 @@ local function with_sides(text, hl, width)
   }
 end
 
+local function image_with_sides(chunks, cols, width)
+  local pad = math.max(width - 4 - (cols or 0), 0)
+  local row = { { '│ ', 'NotebookCellBorder' } }
+  vim.list_extend(row, chunks)
+  table.insert(row, { string.rep(' ', pad) .. ' │', 'NotebookCellBorder' })
+  return row
+end
+
+local function is_boring_image_repr(text)
+  return text:match('^<Figure size .+ with %d+ Axes>$')
+    or text:match('^<Figure size .+ with %d+ Axis>$')
+    or text:match('^<IPython%.core%.display%.Image object')
+end
+
 local function build_output_lines(outputs, width)
   local rows = {}
   local inner_width = math.max(width - 4, 1)
@@ -139,14 +154,22 @@ local function build_output_lines(outputs, width)
       add_text(as_str(output.text), output.name == 'stderr' and 'NotebookCellError' or 'NotebookCellOutput')
     elseif output.output_type == 'execute_result' or output.output_type == 'display_data' then
       local data = output.data or {}
+      local has_image = data['image/png'] ~= nil
       local text = as_str(data['text/plain'])
-      if text ~= '' then
+      if text ~= '' and not (has_image and is_boring_image_repr(text)) then
         add_text(text, 'NotebookCellResult')
       end
-      for _, mime in ipairs({ 'image/gif', 'image/png', 'image/jpeg' }) do
-        if data[mime] then
-          add_text('[' .. mime .. ' output]', 'NotebookCellOutput')
-          break
+
+      if has_image then
+        local image_rows, cols = image.placeholder_rows(output.inline_image)
+        if image_rows then
+          for _, row in ipairs(image_rows) do
+            table.insert(rows, image_with_sides(row, cols, width))
+          end
+        elseif output.inline_image and output.inline_image.status == 'pending' then
+          add_text('[rendering image…]', 'NotebookCellOutput')
+        else
+          add_text('[image/png output]', 'NotebookCellOutput')
         end
       end
     elseif output.output_type == 'error' then

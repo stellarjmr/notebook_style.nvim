@@ -59,13 +59,13 @@ impl KittyTty {
 
     /// Transmit a PNG to the terminal in virtual-placement mode.
     /// Returns the image_id the caller should use when emitting placeholders.
-    pub fn transmit_png(&self, png: &[u8]) -> Result<u32> {
+    pub fn transmit_png(&self, png: &[u8], cols: u32, rows: u32) -> Result<u32> {
         let id = alloc_id();
-        self.transmit_png_with_id(id, png)?;
+        self.transmit_png_with_id(id, png, cols, rows)?;
         Ok(id)
     }
 
-    pub fn transmit_png_with_id(&self, id: u32, png: &[u8]) -> Result<()> {
+    pub fn transmit_png_with_id(&self, id: u32, png: &[u8], cols: u32, rows: u32) -> Result<()> {
         let b64 = base64::engine::general_purpose::STANDARD.encode(png);
         let chunk = 4096;
         let mut pos = 0;
@@ -78,13 +78,13 @@ impl KittyTty {
             let more = if end < total { 1 } else { 0 };
             buf.clear();
             if first {
-                // a=t: transmit only (no immediate placement)
+                // a=T: transmit and create a virtual placement.
                 // f=100: PNG
                 // U=1: virtual placement (Unicode placeholder mode)
                 // q=2: suppress responses
                 buf.push_str(&format!(
-                    "\x1b_Ga=t,f=100,i={},U=1,q=2,m={};{}\x1b\\",
-                    id, more, part
+                    "\x1b_Ga=T,f=100,i={},U=1,c={},r={},q=2,m={};{}\x1b\\",
+                    id, cols, rows, more, part
                 ));
                 first = false;
             } else {
