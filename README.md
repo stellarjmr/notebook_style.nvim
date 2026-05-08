@@ -95,7 +95,7 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 
 ### Inline Execution Backend
 
-Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the lazy.nvim build hook downloads a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
+Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the lazy.nvim build hook downloads a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain. If your plugin manager does not run build hooks, the plugin also tries the same backend install automatically on the first `:NotebookStyleRunCell` / kernel start.
 
 Supported prebuilt targets:
 - `aarch64-apple-darwin` (Apple Silicon macOS)

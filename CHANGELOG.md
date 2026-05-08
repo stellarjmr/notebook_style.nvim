@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.2] - 2026-05-08
+
+### Fixed
+- Automatically installs the Rust backend on first `:NotebookStyleRunCell` / kernel start when plugin-manager build hooks did not run.
+
 ## [0.3.1] - 2026-05-08
 
 ### Fixed
