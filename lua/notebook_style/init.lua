@@ -4,6 +4,7 @@ local config = require('notebook_style.config')
 local cells = require('notebook_style.cells')
 local render = require('notebook_style.render')
 local exec = require('notebook_style.exec')
+local install = require('notebook_style.install')
 local state = require('notebook_style.state')
 
 -- State management
@@ -271,6 +272,10 @@ function M.setup(opts)
 
   vim.api.nvim_create_user_command('NotebookStyleKernelStop', function()
     exec.stop_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleDownloadBackend', function()
+    install.run()
   end, {})
 
   -- Set up keybinding for render visibility toggle
