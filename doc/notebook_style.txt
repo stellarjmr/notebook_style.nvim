@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.2.0
+Version: 0.3.0
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -26,6 +26,7 @@ Features:
   - Smart visibility (hides delimiters in normal mode, hides borders in insert)
   - Fully customizable colors and border styles
   - Non-intrusive rendering using native extmarks
+  - Experimental inline Python cell execution through a Rust Jupyter backend
   - Lightweight and efficient
 
 ==============================================================================
@@ -35,9 +36,17 @@ Using lazy.nvim: >lua
     {
       'stellarjmr/notebook_style.nvim',
       ft = 'python',
+      build = function(plugin)
+        local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
+        install.run(plugin)
+      end,
       opts = {},
     }
 <
+
+The build hook downloads a prebuilt notebook-style-core backend on supported
+tagged releases. Development branches, unsupported platforms, or failed
+downloads fall back to building core/Cargo.toml with Cargo.
 
 Using packer.nvim: >lua
     use {
@@ -90,6 +99,40 @@ cell marker (e.g., " #1 Data Loading").
 :NotebookStyleToggle
     Toggle the plugin for the current buffer.
 
+                                                    *:NotebookStyleRender*
+:NotebookStyleRender
+    Show or re-render cells for the current buffer. In manual render mode this
+    is an explicit render action; in auto mode it also shows rendering again if
+    it was hidden.
+
+                                                    *:NotebookStyleToggleRender*
+:NotebookStyleToggleRender
+    Toggle cell rendering visibility for the current buffer. Rendering is shown
+    automatically by default; use this command to hide it, and run it again to
+    show it. With manual_render enabled, buffers start hidden and the first
+    toggle shows rendering.
+
+                                                    *:NotebookStyleRunCell*
+:NotebookStyleRunCell
+    Run the current Python cell through the Rust backend and render text output
+    and image/png output below the cell. Requires building
+    core/notebook-style-core first. Ghostty/Kitty use the Kitty graphics
+    protocol; unsupported terminals show a text placeholder.
+
+                                                    *:NotebookStyleKernelStart*
+:NotebookStyleKernelStart
+    Start the Python Jupyter kernel for the current buffer.
+
+                                                    *:NotebookStyleKernelStop*
+:NotebookStyleKernelStop
+    Stop the Python Jupyter kernel for the current buffer.
+
+                                             *:NotebookStyleDownloadBackend*
+:NotebookStyleDownloadBackend
+    Download the prebuilt notebook-style-core backend for the current tagged
+    release, or fall back to cargo build --release. Use this after install or
+    update if the inline execution backend is missing.
+
 ==============================================================================
 5. CONFIGURATION                               *notebook_style-configuration*
 
@@ -105,6 +148,9 @@ Default configuration: >lua
       colors = {
         border = '#6272A4',      -- Border color
         delimiter = '#50FA7B',   -- Delimiter marker color
+        output = '#A9B1D6',      -- Inline output color
+        result = '#C0CAF5',      -- Inline result color
+        error = '#F7768E',       -- Inline error color
       },
 
       -- Visibility options
@@ -122,10 +168,21 @@ Default configuration: >lua
       cell_label_format_named = '{icon}#{number} {name}',    -- With name
       cell_label_format_unnamed = '{icon}#{number}',         -- Without name
 
-      -- Cell width configuration
+      -- Legacy cell width configuration. Borders now use the full text area
+      -- for stable wrapped-line rendering.
       cell_width_percentage = 80,      -- Cell width as % of window
       min_cell_width = 40,             -- Minimum cell width
       max_cell_width = 120,            -- Maximum cell width
+
+      -- Inline execution options
+      backend_cmd = nil,               -- Auto-detect notebook-style-core
+      kernel_name = 'python3',         -- Jupyter kernelspec name
+      auto_start_kernel = true,        -- Start kernel on first run
+      output_max_lines = 200,          -- Truncate very large outputs
+
+      -- Render automatically by default. Set true to start hidden and render
+      -- explicitly with :NotebookStyleRender or :NotebookStyleToggleRender.
+      manual_render = false,
 
       -- Filetypes to enable the plugin for
       filetypes = { 'python' },

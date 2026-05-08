@@ -15,6 +15,7 @@ test_*.lua
 # Development files
 AGENTS.md
 test_plugin.md
+core/target/
 
 # IDE
 .idea/

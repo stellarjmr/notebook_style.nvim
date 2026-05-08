@@ -3,8 +3,12 @@
 
 -- Lazy.nvim setup
 return {
-  'zhimin/notebook_style.nvim',
+  'stellarjmr/notebook_style.nvim',
   ft = 'python',
+  build = function(plugin)
+    local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
+    install.run(plugin)
+  end,
   opts = {
     -- Choose border style: 'solid', 'dashed', or 'double'
     border_style = 'solid',
@@ -16,6 +20,7 @@ return {
     },
 
     -- Behavior options
+    -- Cells render automatically by default; <leader>rs toggles visibility.
     hide_delimiter = true,
     hide_border_in_insert = true,
 

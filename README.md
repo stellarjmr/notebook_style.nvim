@@ -13,6 +13,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 - **Fully Customizable**: Colors, border styles, and behavior can be configured
 - **Non-intrusive**: Borders don't obscure code and automatically adjust to window width
 - **Lightweight**: Uses Neovim's native extmarks for efficient rendering
+- **Inline Cell Execution (experimental)**: Run Python cells through a Rust Jupyter backend and render text outputs inline
 
 ## Installation
 
@@ -22,6 +23,10 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 {
   'stellarjmr/notebook_style.nvim',
   ft = 'python',  -- Load only for Python files
+  build = function(plugin)
+    local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
+    install.run(plugin)
+  end,
   opts = {},
 }
 ```
@@ -81,8 +86,32 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
 - `:NotebookStyleDisable` - Disable the plugin for current buffer
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
-- `:NotebookStyleRender` - Manually render cells (useful with `manual_render` option)
-- `:NotebookStyleToggleRender` - Toggle cell rendering on/off (useful with `manual_render` option)
+- `:NotebookStyleRender` - Show/re-render cells for the current buffer
+- `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
+- `:NotebookStyleRunCell` - Run the current Python cell and render output inline
+- `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
+- `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
+- `:NotebookStyleDownloadBackend` - Download the prebuilt backend for this release, or fall back to building from source
+
+### Inline Execution Backend
+
+Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the lazy.nvim build hook downloads a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
+
+Supported prebuilt targets:
+- `aarch64-apple-darwin` (Apple Silicon macOS)
+- `x86_64-apple-darwin` (Intel macOS)
+- `x86_64-unknown-linux-gnu` (Linux x86_64)
+- `aarch64-unknown-linux-gnu` (Linux ARM64)
+
+Development branches, unsupported platforms, or failed downloads fall back to a local Cargo build:
+
+```sh
+cargo build --release --manifest-path core/Cargo.toml
+```
+
+You can also run `:NotebookStyleDownloadBackend` after install/update to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
+
+Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
 
 ### Readability Tips
 
@@ -104,12 +133,15 @@ require('notebook_style').setup({
   colors = {
     border = '#6272A4',      -- Border color
     delimiter = '#50FA7B',   -- Delimiter marker color
+    output = '#A9B1D6',      -- Inline stdout/stderr color
+    result = '#C0CAF5',      -- Inline result color
+    error = '#F7768E',       -- Inline error color
   },
 
   -- Visibility options
   hide_delimiter = true,           -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,    -- Hide borders in insert mode
-  manual_render = false,           -- If true, cells only render on <leader>rs
+  manual_render = false,           -- If true, start hidden and render on demand
 
   -- Cell marker (shown when delimiter is hidden)
   cell_marker = ' ',              -- Python nerd font icon
@@ -122,10 +154,17 @@ require('notebook_style').setup({
   cell_label_format_named = '{icon}#{number} {name}',    -- Format with name
   cell_label_format_unnamed = '{icon}#{number}',         -- Format without name
 
-  -- Cell width configuration
+  -- Legacy cell width configuration. Borders now use the full window text area
+  -- for stable wrapped-line rendering; these are accepted for compatibility.
   cell_width_percentage = 80,      -- Cell width as % of window width (1-100)
   min_cell_width = 40,             -- Minimum cell width in characters
   max_cell_width = 120,            -- Maximum cell width in characters
+
+  -- Inline execution options
+  backend_cmd = nil,               -- Auto-detect core/target/{release,debug}/notebook-style-core
+  kernel_name = 'python3',         -- Jupyter kernelspec name
+  auto_start_kernel = true,        -- Start kernel on first :NotebookStyleRunCell
+  output_max_lines = 200,          -- Truncate very large outputs
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
@@ -138,15 +177,17 @@ By default, cells render automatically as you type and move around. For better p
 
 ```lua
 require('notebook_style').setup({
-  manual_render = true,  -- Cells won't render automatically
+  manual_render = true,  -- Start hidden and render on demand
 })
 ```
 
 With manual rendering enabled:
-- Cells don't render automatically on text changes
-- Press `<leader>rs` to toggle cell rendering on/off
+- Cells start hidden and don't render automatically on text changes
+- Press `<leader>rs` to show cell rendering; press it again to hide rendering
 - Mode changes (insert/normal) still work correctly
 - Use `:NotebookStyleToggleRender` command as an alternative
+
+With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
 **Keybinding**: The plugin automatically sets up `<leader>rs` for toggling. You can customize it:
 
