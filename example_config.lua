@@ -3,7 +3,7 @@
 
 -- Lazy.nvim setup
 return {
-  'zhimin/notebook_style.nvim',
+  'stellarjmr/notebook_style.nvim',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
