@@ -14,6 +14,25 @@ local function warn(msg)
   end)
 end
 
+local function spawn_error(cmd, err)
+  local exists = vim.fn.filereadable(cmd) == 1
+  local executable = vim.fn.executable(cmd) == 1
+  local details = {
+    'notebook-style-core spawn failed: ' .. tostring(err),
+    'command: ' .. tostring(cmd),
+    'exists: ' .. tostring(exists),
+    'executable: ' .. tostring(executable),
+  }
+
+  if not exists or not executable then
+    table.insert(details, 'Run :NotebookStyleDownloadBackend, then check :messages for installer output.')
+    table.insert(details, 'Prebuilt backends are available for tagged releases on Apple Silicon macOS, Linux x86_64, and Linux ARM64.')
+    table.insert(details, 'Unsupported platforms require Cargo to build core/Cargo.toml locally.')
+  end
+
+  return table.concat(details, '\n')
+end
+
 function M.spawn(opts)
   local stdin = uv.new_pipe(false)
   local stdout = uv.new_pipe(false)
@@ -74,7 +93,7 @@ function M.spawn(opts)
   end)
 
   if not handle then
-    error('notebook-style-core spawn failed: ' .. tostring(pid))
+    error(spawn_error(cmd, pid))
   end
 
   c.handle, c.pid, c.job = handle, pid, pid

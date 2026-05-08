@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-08
+
+### Fixed
+- Improved backend spawn failures with actionable diagnostics that show the attempted command path and installer hints.
+- Treat Intel macOS as a source-build platform until a prebuilt binary is published for it.
+
 ## [0.3.0] - 2026-05-08
 
 ### Changed
