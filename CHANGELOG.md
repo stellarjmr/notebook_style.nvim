@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] - 2026-05-08
 
 ### Changed
 - Cells now render automatically by default, and `<leader>rs` / `:NotebookStyleToggleRender` toggles current-buffer render visibility off and back on. Manual render mode still starts hidden and renders on demand.
