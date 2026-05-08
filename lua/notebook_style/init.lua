@@ -3,6 +3,8 @@ local M = {}
 local config = require('notebook_style.config')
 local cells = require('notebook_style.cells')
 local render = require('notebook_style.render')
+local exec = require('notebook_style.exec')
+local state = require('notebook_style.state')
 
 -- State management
 M.enabled_buffers = {}
@@ -155,6 +157,7 @@ function M.disable(bufnr)
   M.enabled_buffers[bufnr] = nil
   M.manual_render_visible[bufnr] = nil
   M.pending_updates[bufnr] = nil
+  state.clear(bufnr)
   render.clear(bufnr)
 
   -- Clear autocommands
@@ -218,6 +221,9 @@ end
 --- @param opts table Configuration options
 function M.setup(opts)
   config.setup(opts)
+  exec.set_refresh(function(bufnr)
+    request_update(bufnr, vim.fn.bufwinid(bufnr))
+  end)
 
   -- Auto-enable for configured filetypes
   vim.api.nvim_create_autocmd('FileType', {
@@ -248,10 +254,26 @@ function M.setup(opts)
     M.toggle_render()
   end, {})
 
+  vim.api.nvim_create_user_command('NotebookStyleRunCell', function()
+    exec.run_cell(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleKernelStart', function()
+    exec.start_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleKernelStop', function()
+    exec.stop_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
   -- Set up keybinding for manual render toggle
   vim.keymap.set('n', '<leader>rs', function()
     M.toggle_render()
   end, { desc = 'Toggle notebook cell rendering', silent = true })
+
+  vim.keymap.set('n', '<leader>rr', function()
+    exec.run_cell(vim.api.nvim_get_current_buf())
+  end, { desc = 'Run notebook cell', silent = true })
 end
 
 return M

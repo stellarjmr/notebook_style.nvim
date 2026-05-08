@@ -13,6 +13,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 - **Fully Customizable**: Colors, border styles, and behavior can be configured
 - **Non-intrusive**: Borders don't obscure code and automatically adjust to window width
 - **Lightweight**: Uses Neovim's native extmarks for efficient rendering
+- **Inline Cell Execution (experimental)**: Run Python cells through a Rust Jupyter backend and render text outputs inline
 
 ## Installation
 
@@ -83,6 +84,20 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
 - `:NotebookStyleRender` - Manually render cells (useful with `manual_render` option)
 - `:NotebookStyleToggleRender` - Toggle cell rendering on/off (useful with `manual_render` option)
+- `:NotebookStyleRunCell` - Run the current Python cell and render output inline
+- `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
+- `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
+
+### Inline Execution Backend
+
+Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. Build the Rust backend before running cells:
+
+```sh
+cd core
+cargo build --release
+```
+
+Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and image placeholders below the cell. True inline image rendering is planned; image outputs currently show as `[image/png output]` / `[image/jpeg output]` placeholders.
 
 ### Readability Tips
 
@@ -104,6 +119,9 @@ require('notebook_style').setup({
   colors = {
     border = '#6272A4',      -- Border color
     delimiter = '#50FA7B',   -- Delimiter marker color
+    output = '#A9B1D6',      -- Inline stdout/stderr color
+    result = '#C0CAF5',      -- Inline result color
+    error = '#F7768E',       -- Inline error color
   },
 
   -- Visibility options
@@ -122,10 +140,17 @@ require('notebook_style').setup({
   cell_label_format_named = '{icon}#{number} {name}',    -- Format with name
   cell_label_format_unnamed = '{icon}#{number}',         -- Format without name
 
-  -- Cell width configuration
+  -- Legacy cell width configuration. Borders now use the full window text area
+  -- for stable wrapped-line rendering; these are accepted for compatibility.
   cell_width_percentage = 80,      -- Cell width as % of window width (1-100)
   min_cell_width = 40,             -- Minimum cell width in characters
   max_cell_width = 120,            -- Maximum cell width in characters
+
+  -- Inline execution options
+  backend_cmd = nil,               -- Auto-detect core/target/{release,debug}/notebook-style-core
+  kernel_name = 'python3',         -- Jupyter kernelspec name
+  auto_start_kernel = true,        -- Start kernel on first :NotebookStyleRunCell
+  output_max_lines = 200,          -- Truncate very large outputs
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },

@@ -1,5 +1,6 @@
 local M = {}
 local config = require('notebook_style.config')
+local state = require('notebook_style.state')
 
 -- Namespace for extmarks
 M.ns = vim.api.nvim_create_namespace('notebook_style')
@@ -26,6 +27,141 @@ end
 local function make_border_line(width, left, middle, right)
   width = math.max(width, 2)
   return left .. string.rep(middle, width - 2) .. right
+end
+
+local function divider_line(width, label)
+  local chars = get_border_chars()
+  local main = chars.vertical .. '─ ' .. label .. ' '
+  local pad = width - vim.fn.strdisplaywidth(main) - 1
+  return main .. string.rep(chars.horizontal, math.max(pad, 0)) .. chars.vertical
+end
+
+local function as_str(value)
+  if type(value) == 'table' then
+    return table.concat(value, '')
+  end
+  if type(value) == 'string' then
+    return value
+  end
+  return ''
+end
+
+local function strip_ansi(text)
+  text = text:gsub('\27%[[?]?[%d;]*[a-zA-Z]', '')
+  text = text:gsub('\27%][^\27]*\27\\', '')
+  text = text:gsub('\27.', '')
+  return text
+end
+
+local function process_cr(text)
+  local out = {}
+  for chunk in (text .. '\n'):gmatch('([^\n]*)\n') do
+    local segments = {}
+    for segment in (chunk .. '\r'):gmatch('([^\r]*)\r') do
+      table.insert(segments, segment)
+    end
+    table.insert(out, segments[#segments] or '')
+  end
+  if out[#out] == '' then
+    table.remove(out)
+  end
+  return table.concat(out, '\n')
+end
+
+local function wrap_line(line, width)
+  if width <= 0 or vim.fn.strdisplaywidth(line) <= width then
+    return { line }
+  end
+
+  local out = {}
+  local chars = vim.fn.strchars(line)
+  local pos = 0
+
+  while pos < chars do
+    local start = pos
+    local current_width = 0
+    while pos < chars do
+      local char = vim.fn.strcharpart(line, pos, 1)
+      local char_width = vim.fn.strdisplaywidth(char)
+      if current_width + char_width > width then
+        break
+      end
+      current_width = current_width + char_width
+      pos = pos + 1
+    end
+    if pos == start then
+      pos = pos + 1
+    end
+    table.insert(out, vim.fn.strcharpart(line, start, pos - start))
+  end
+
+  return out
+end
+
+local function with_sides(text, hl, width)
+  local inner_width = math.max(width - 4, 1)
+  local display_width = vim.fn.strdisplaywidth(text)
+  if display_width > inner_width then
+    text = vim.fn.strcharpart(text, 0, inner_width)
+    display_width = vim.fn.strdisplaywidth(text)
+  end
+  local pad = math.max(inner_width - display_width, 0)
+  return {
+    { '│ ', 'NotebookCellBorder' },
+    { text, hl },
+    { string.rep(' ', pad) .. ' │', 'NotebookCellBorder' },
+  }
+end
+
+local function build_output_lines(outputs, width)
+  local rows = {}
+  local inner_width = math.max(width - 4, 1)
+  local max_lines = config.options.output_max_lines or 200
+
+  local function add_text(text, hl)
+    text = strip_ansi(process_cr(text))
+    for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
+      for _, wrapped in ipairs(wrap_line(line, inner_width)) do
+        if #rows >= max_lines then
+          return
+        end
+        table.insert(rows, with_sides(wrapped, hl, width))
+      end
+    end
+  end
+
+  for _, output in ipairs(outputs or {}) do
+    if #rows >= max_lines then
+      break
+    end
+
+    if output.output_type == 'stream' then
+      add_text(as_str(output.text), output.name == 'stderr' and 'NotebookCellError' or 'NotebookCellOutput')
+    elseif output.output_type == 'execute_result' or output.output_type == 'display_data' then
+      local data = output.data or {}
+      local text = as_str(data['text/plain'])
+      if text ~= '' then
+        add_text(text, 'NotebookCellResult')
+      end
+      for _, mime in ipairs({ 'image/gif', 'image/png', 'image/jpeg' }) do
+        if data[mime] then
+          add_text('[' .. mime .. ' output]', 'NotebookCellOutput')
+          break
+        end
+      end
+    elseif output.output_type == 'error' then
+      add_text(as_str(output.ename) .. ': ' .. as_str(output.evalue), 'NotebookCellError')
+      for _, line in ipairs(output.traceback or {}) do
+        add_text(as_str(line), 'NotebookCellError')
+      end
+    end
+  end
+
+  if #rows >= max_lines then
+    table.insert(rows, with_sides('… output truncated …', 'NotebookCellOutput', width))
+  end
+
+  return rows
 end
 
 --- Calculate the usable text width for a window.
@@ -81,9 +217,8 @@ end
 --- @param show_borders boolean Whether to show borders
 --- @param show_delimiter boolean Whether to show delimiter
 --- @param frame_width number Frame width
---- @param right_margin number Empty columns between the right border and window edge
 --- @param cell_number number Cell number for display
-function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, right_margin, cell_number)
+function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
   local chars = get_border_chars()
 
   -- Build cell label with optional name
@@ -147,10 +282,8 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, r
     })
 
     -- Right border is aligned by Neovim instead of manual per-line padding.
-    -- When the configured frame is narrower than the usable text area, trailing
-    -- spaces keep the visible border inset from the window edge.
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-      virt_text = { { chars.vertical .. string.rep(' ', right_margin), 'NotebookCellBorder' } },
+      virt_text = { { chars.vertical, 'NotebookCellBorder' } },
       virt_text_pos = 'right_align',
       virt_text_repeat_linebreak = true,
       hl_mode = 'combine',
@@ -158,12 +291,20 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, r
     })
   end
 
-  -- Bottom border - add it as a virtual line below the cell
+  local lines_below = {}
+  local outputs = state.outputs(bufnr, cell)
+  if #outputs > 0 then
+    local execution_count = state.execution_count(bufnr, cell) or cell_number
+    table.insert(lines_below, { { divider_line(frame_width, 'Out[' .. execution_count .. ']'), 'NotebookCellBorder' } })
+    for _, row in ipairs(build_output_lines(outputs, frame_width)) do
+      table.insert(lines_below, row)
+    end
+  end
+
   local bottom_border = make_border_line(frame_width, chars.bottom_left, chars.horizontal, chars.bottom_right)
+  table.insert(lines_below, { { bottom_border, 'NotebookCellBorder' } })
   vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.end_line, 0, {
-    virt_lines = {
-      { { bottom_border, 'NotebookCellBorder' } },
-    },
+    virt_lines = lines_below,
   })
 end
 
@@ -188,22 +329,13 @@ function M.render_all(bufnr, cells, mode, winid)
     show_delimiter = false
   end
 
-  -- Calculate a consistent frame width for ALL cells based on usable text area.
+  -- Full-window layout: use the full text area width. The legacy percentage
+  -- options remain accepted for compatibility but no longer drive rendering.
   local usable_width = get_usable_width(winid)
-  local percentage = config.options.cell_width_percentage or 80
-  local min_width = config.options.min_cell_width or 40
-  local max_width = math.min(config.options.max_cell_width or 120, usable_width)
-
-  -- Calculate frame width as percentage of usable text width
-  local calculated_width = math.floor(usable_width * percentage / 100)
-
-  -- Apply min/max constraints
-  local standard_frame_width = math.max(math.min(min_width, usable_width), math.min(calculated_width, max_width))
-  standard_frame_width = math.min(standard_frame_width, usable_width)
-  local right_margin = math.max(usable_width - standard_frame_width, 0)
+  local standard_frame_width = usable_width
 
   for i, cell in ipairs(cells) do
-    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, right_margin, i)
+    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i)
   end
 end
 
