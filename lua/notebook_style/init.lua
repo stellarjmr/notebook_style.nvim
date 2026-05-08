@@ -8,7 +8,7 @@ local state = require('notebook_style.state')
 
 -- State management
 M.enabled_buffers = {}
-M.manual_render_visible = {}  -- Track if manual rendering is currently visible
+M.render_visible = {}  -- Track if rendering is currently visible per buffer
 M.pending_updates = {}
 
 --- Resolve a usable window for a buffer
@@ -37,8 +37,8 @@ local function update_cells(bufnr, winid)
     return
   end
 
-  -- In manual render mode, only render if explicitly visible
-  if config.options.manual_render and not M.manual_render_visible[bufnr] then
+  -- Rendering can be hidden independently of whether the plugin is enabled.
+  if not M.render_visible[bufnr] then
     render.clear(bufnr)
     return
   end
@@ -87,6 +87,7 @@ function M.enable(bufnr)
   end
 
   M.enabled_buffers[bufnr] = true
+  M.render_visible[bufnr] = not config.options.manual_render
 
   -- Set up autocommands for this buffer
   local group = vim.api.nvim_create_augroup('NotebookStyle_' .. bufnr, { clear = true })
@@ -155,7 +156,7 @@ function M.disable(bufnr)
   end
 
   M.enabled_buffers[bufnr] = nil
-  M.manual_render_visible[bufnr] = nil
+  M.render_visible[bufnr] = nil
   M.pending_updates[bufnr] = nil
   state.clear(bufnr)
   render.clear(bufnr)
@@ -179,8 +180,7 @@ function M.toggle(bufnr)
   end
 end
 
---- Manually render cells for the current buffer
---- Useful when manual_render is enabled
+--- Show and render cells for the current buffer
 --- @param bufnr number Buffer number
 function M.render(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -191,11 +191,11 @@ function M.render(bufnr)
   end
 
   -- Mark as visible and render cells
-  M.manual_render_visible[bufnr] = true
+  M.render_visible[bufnr] = true
   request_update(bufnr, vim.api.nvim_get_current_win())
 end
 
---- Toggle manual rendering for the current buffer
+--- Toggle rendering visibility for the current buffer
 --- @param bufnr number Buffer number
 function M.toggle_render(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -203,12 +203,16 @@ function M.toggle_render(bufnr)
   -- Enable the buffer if not already enabled
   if not M.enabled_buffers[bufnr] then
     M.enable(bufnr)
+    if M.render_visible[bufnr] then
+      request_update(bufnr, vim.api.nvim_get_current_win())
+      return
+    end
   end
 
   -- Toggle visibility state
-  M.manual_render_visible[bufnr] = not M.manual_render_visible[bufnr]
+  M.render_visible[bufnr] = not M.render_visible[bufnr]
 
-  if M.manual_render_visible[bufnr] then
+  if M.render_visible[bufnr] then
     -- Show rendering
     request_update(bufnr, vim.api.nvim_get_current_win())
   else
@@ -223,7 +227,7 @@ function M.setup(opts)
   config.setup(opts)
   exec.set_refresh(function(bufnr)
     if config.options.manual_render then
-      M.manual_render_visible[bufnr] = true
+      M.render_visible[bufnr] = true
     end
     request_update(bufnr, vim.fn.bufwinid(bufnr))
   end)
@@ -269,7 +273,7 @@ function M.setup(opts)
     exec.stop_kernel(vim.api.nvim_get_current_buf())
   end, {})
 
-  -- Set up keybinding for manual render toggle
+  -- Set up keybinding for render visibility toggle
   vim.keymap.set('n', '<leader>rs', function()
     M.toggle_render()
   end, { desc = 'Toggle notebook cell rendering', silent = true })

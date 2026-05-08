@@ -16,6 +16,7 @@ return {
     },
 
     -- Behavior options
+    -- Cells render automatically by default; <leader>rs toggles visibility.
     hide_delimiter = true,
     hide_border_in_insert = true,
 

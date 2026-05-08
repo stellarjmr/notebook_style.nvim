@@ -3,7 +3,7 @@
 
 require('notebook_style').setup({
   -- Enable manual rendering mode
-  -- Cells won't render automatically - use <leader>rs to render
+  -- Cells start hidden - use <leader>rs to show/hide rendering
   manual_render = true,
 
   -- Other optional configuration
@@ -24,7 +24,7 @@ require('notebook_style').setup({
 
 -- Usage:
 -- 1. Open a Python file with cell delimiters (# %%)
--- 2. Cells won't render automatically
--- 3. Press <leader>rs to toggle cell rendering on/off
+-- 2. Cells start hidden and won't render automatically on text changes
+-- 3. Press <leader>rs to show cell rendering; press it again to hide
 -- 4. Or use :NotebookStyleToggleRender command to toggle
 -- 5. Or use :NotebookStyleRender command to show rendering (without toggle)

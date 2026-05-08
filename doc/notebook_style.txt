@@ -91,6 +91,19 @@ cell marker (e.g., " #1 Data Loading").
 :NotebookStyleToggle
     Toggle the plugin for the current buffer.
 
+                                                    *:NotebookStyleRender*
+:NotebookStyleRender
+    Show or re-render cells for the current buffer. In manual render mode this
+    is an explicit render action; in auto mode it also shows rendering again if
+    it was hidden.
+
+                                                    *:NotebookStyleToggleRender*
+:NotebookStyleToggleRender
+    Toggle cell rendering visibility for the current buffer. Rendering is shown
+    automatically by default; use this command to hide it, and run it again to
+    show it. With manual_render enabled, buffers start hidden and the first
+    toggle shows rendering.
+
                                                     *:NotebookStyleRunCell*
 :NotebookStyleRunCell
     Run the current Python cell through the Rust backend and render text output
@@ -152,6 +165,10 @@ Default configuration: >lua
       kernel_name = 'python3',         -- Jupyter kernelspec name
       auto_start_kernel = true,        -- Start kernel on first run
       output_max_lines = 200,          -- Truncate very large outputs
+
+      -- Render automatically by default. Set true to start hidden and render
+      -- explicitly with :NotebookStyleRender or :NotebookStyleToggleRender.
+      manual_render = false,
 
       -- Filetypes to enable the plugin for
       filetypes = { 'python' },
