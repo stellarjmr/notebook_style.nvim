@@ -23,6 +23,10 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 {
   'stellarjmr/notebook_style.nvim',
   ft = 'python',  -- Load only for Python files
+  build = function(plugin)
+    local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
+    install.run(plugin)
+  end,
   opts = {},
 }
 ```
@@ -87,15 +91,25 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleRunCell` - Run the current Python cell and render output inline
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
+- `:NotebookStyleDownloadBackend` - Download the prebuilt backend for this release, or fall back to building from source
 
 ### Inline Execution Backend
 
-Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. Build the Rust backend before running cells:
+Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the lazy.nvim build hook downloads a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
+
+Supported prebuilt targets:
+- `aarch64-apple-darwin` (Apple Silicon macOS)
+- `x86_64-apple-darwin` (Intel macOS)
+- `x86_64-unknown-linux-gnu` (Linux x86_64)
+- `aarch64-unknown-linux-gnu` (Linux ARM64)
+
+Development branches, unsupported platforms, or failed downloads fall back to a local Cargo build:
 
 ```sh
-cd core
-cargo build --release
+cargo build --release --manifest-path core/Cargo.toml
 ```
+
+You can also run `:NotebookStyleDownloadBackend` after install/update to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
 Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
 

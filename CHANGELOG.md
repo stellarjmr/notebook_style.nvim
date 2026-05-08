@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Cells now render automatically by default, and `<leader>rs` / `:NotebookStyleToggleRender` toggles current-buffer render visibility off and back on. Manual render mode still starts hidden and renders on demand.
+- Inline execution backend installation now prefers tagged-release prebuilt binaries via `lua/notebook_style/install.lua`, with Cargo used only as a fallback for development checkouts or unsupported platforms.
 
 ## [0.2.1] - 2026-02-10
 

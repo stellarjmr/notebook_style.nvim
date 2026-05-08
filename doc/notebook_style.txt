@@ -36,9 +36,17 @@ Using lazy.nvim: >lua
     {
       'stellarjmr/notebook_style.nvim',
       ft = 'python',
+      build = function(plugin)
+        local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
+        install.run(plugin)
+      end,
       opts = {},
     }
 <
+
+The build hook downloads a prebuilt notebook-style-core backend on supported
+tagged releases. Development branches, unsupported platforms, or failed
+downloads fall back to building core/Cargo.toml with Cargo.
 
 Using packer.nvim: >lua
     use {
@@ -118,6 +126,12 @@ cell marker (e.g., " #1 Data Loading").
                                                     *:NotebookStyleKernelStop*
 :NotebookStyleKernelStop
     Stop the Python Jupyter kernel for the current buffer.
+
+                                             *:NotebookStyleDownloadBackend*
+:NotebookStyleDownloadBackend
+    Download the prebuilt notebook-style-core backend for the current tagged
+    release, or fall back to cargo build --release. Use this after install or
+    update if the inline execution backend is missing.
 
 ==============================================================================
 5. CONFIGURATION                               *notebook_style-configuration*
