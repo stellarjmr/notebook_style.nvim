@@ -58,9 +58,17 @@ M.defaults = {
   cell_label_format_unnamed = '{icon}#{number}',  -- Format when cell has no name
 
   -- Frame width configuration
+  -- These legacy options are accepted for compatibility. Rendering now uses a
+  -- full-window layout for stable wrapped lines and right-aligned borders.
   cell_width_percentage = 80,  -- Cell width as percentage of window width (1-100)
   min_cell_width = 40,  -- Minimum cell width in characters
   max_cell_width = 120,  -- Maximum cell width in characters
+
+  -- Inline execution options
+  backend_cmd = nil,  -- Command list for notebook-style-core; auto-detected when nil
+  kernel_name = 'python3',
+  auto_start_kernel = true,
+  output_max_lines = 200,
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
@@ -82,6 +90,18 @@ function M.setup(opts)
 
   vim.api.nvim_set_hl(0, 'NotebookCellDelimiter', {
     fg = M.options.colors.delimiter,
+  })
+
+  vim.api.nvim_set_hl(0, 'NotebookCellOutput', {
+    fg = M.options.colors.output or '#A9B1D6',
+  })
+
+  vim.api.nvim_set_hl(0, 'NotebookCellResult', {
+    fg = M.options.colors.result or '#C0CAF5',
+  })
+
+  vim.api.nvim_set_hl(0, 'NotebookCellError', {
+    fg = M.options.colors.error or '#F7768E',
   })
 end
 

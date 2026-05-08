@@ -1,0 +1,59 @@
+[package]
+name = "notebook-style-core"
+version = "0.1.0"
+edition = "2021"
+description = "Native backend for notebook_style.nvim — Python cell execution in Neovim"
+
+[[bin]]
+name = "notebook-style-core"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "process", "time", "signal", "fs"] }
+tokio-stream = "0.1"
+futures = "0.3"
+
+# ZMQ — pure-rust impl, no libzmq C dep
+zeromq = { version = "0.4", default-features = false, features = ["tokio-runtime", "all-transport"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
+rmp-serde = "1.3"
+rmpv = { version = "1.3", features = ["with-serde"] }
+
+# Crypto for Jupyter HMAC signing
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# IDs & time
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Errors & logging
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# Filesystem
+dirs = "5"
+
+# Misc
+bytes = "1"
+parking_lot = "0.12"
+dashmap = "6"
+once_cell = "1"
+base64 = "0.22"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
+
+[profile.dev]
+opt-level = 1
