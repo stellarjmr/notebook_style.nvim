@@ -23,9 +23,6 @@ local function detect_target()
     if machine == 'arm64' then
       return 'aarch64-apple-darwin'
     end
-    if machine == 'x86_64' then
-      return 'x86_64-apple-darwin'
-    end
   elseif sys == 'Linux' then
     if machine == 'x86_64' then
       return 'x86_64-unknown-linux-gnu'
