@@ -1,6 +1,23 @@
 local M = {}
 local config = require('notebook_style.config')
 
+--- Check whether a line matches the default Python cell delimiter.
+--- The default delimiter is "# %%" followed by whitespace or end-of-line;
+--- this avoids treating IPython magic comments like "# %%time" as cells.
+--- @param line string Buffer line content
+--- @return boolean True if the line is a default cell delimiter
+local function is_default_delimiter(line)
+  local _, delimiter_end = line:find(config.defaults.cell_delimiter)
+
+  if not delimiter_end then
+    return false
+  end
+
+  local next_char = line:sub(delimiter_end + 1, delimiter_end + 1)
+
+  return next_char == '' or next_char:match('%s') ~= nil
+end
+
 --- Find all cell delimiters in the buffer
 --- @param bufnr number Buffer number
 --- @param pattern string Delimiter pattern
@@ -8,9 +25,18 @@ local config = require('notebook_style.config')
 function M.find_delimiters(bufnr, pattern)
   local delimiters = {}
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local use_default_delimiter = pattern == config.defaults.cell_delimiter
 
   for i, line in ipairs(lines) do
-    if line:match(pattern) then
+    local is_delimiter
+
+    if use_default_delimiter then
+      is_delimiter = is_default_delimiter(line)
+    else
+      is_delimiter = line:match(pattern)
+    end
+
+    if is_delimiter then
       table.insert(delimiters, i - 1)  -- 0-indexed
     end
   end

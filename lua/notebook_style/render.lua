@@ -148,6 +148,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
       virt_text = { { chars.vertical, 'NotebookCellBorder' } },
       virt_text_pos = 'inline',
+      hl_mode = 'combine',
       priority = 200,
     })
 
@@ -158,6 +159,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
         virt_text = { { chars.vertical, 'NotebookCellBorder' } },
         virt_text_pos = 'overlay',
         virt_text_win_col = math.max(0, cell_frame_width - 1),
+        hl_mode = 'combine',
         priority = 200,
       })
     else
@@ -165,6 +167,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
         virt_text = { { padding .. chars.vertical, 'NotebookCellBorder' } },
         virt_text_pos = 'eol',
+        hl_mode = 'combine',
         priority = 200,
       })
     end
