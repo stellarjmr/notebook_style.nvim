@@ -7,11 +7,31 @@ local render = require('notebook_style.render')
 -- State management
 M.enabled_buffers = {}
 M.manual_render_visible = {}  -- Track if manual rendering is currently visible
+M.pending_updates = {}
+
+--- Resolve a usable window for a buffer
+--- @param bufnr number Buffer number
+--- @param winid number|nil Preferred window id
+--- @return number|nil Window id
+local function resolve_winid(bufnr, winid)
+  if winid and vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+    return winid
+  end
+
+  local wins = vim.fn.win_findbuf(bufnr)
+  return wins and wins[1] or nil
+end
 
 --- Update cell rendering for a buffer
 --- @param bufnr number Buffer number
-local function update_cells(bufnr)
-  if not M.enabled_buffers[bufnr] then
+--- @param winid number|nil Window id
+local function update_cells(bufnr, winid)
+  if not M.enabled_buffers[bufnr] or not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  winid = resolve_winid(bufnr, winid)
+  if not winid then
     return
   end
 
@@ -22,9 +42,12 @@ local function update_cells(bufnr)
   end
 
   -- Set window-local conceal options for proper delimiter hiding
-  -- These are window-local, so we set them each time
-  vim.wo.conceallevel = 2
-  vim.wo.concealcursor = 'nc'
+  -- These are window-local, so we set them each time. breakindent keeps the
+  -- repeated left border from covering text on wrapped continuation lines.
+  vim.api.nvim_set_option_value('conceallevel', 2, { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('concealcursor', 'nc', { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('breakindent', true, { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('breakindentopt', 'min:1', { scope = 'local', win = winid })
 
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
   local delimiters = cells.find_delimiters(bufnr, config.options.cell_delimiter)
@@ -33,7 +56,23 @@ local function update_cells(bufnr)
   -- Get current mode
   local mode = vim.api.nvim_get_mode().mode
 
-  render.render_all(bufnr, cell_list, mode)
+  render.render_all(bufnr, cell_list, mode, winid)
+end
+
+--- Schedule a coalesced rendering update for a buffer
+--- @param bufnr number Buffer number
+--- @param winid number|nil Window id
+local function request_update(bufnr, winid)
+  if not M.enabled_buffers[bufnr] or M.pending_updates[bufnr] then
+    return
+  end
+
+  M.pending_updates[bufnr] = true
+
+  vim.schedule(function()
+    M.pending_updates[bufnr] = nil
+    update_cells(bufnr, winid)
+  end)
 end
 
 --- Enable the plugin for a buffer
@@ -55,7 +94,7 @@ function M.enable(bufnr)
     group = group,
     buffer = bufnr,
     callback = function()
-      update_cells(bufnr)
+      request_update(bufnr, vim.api.nvim_get_current_win())
     end,
   })
 
@@ -66,7 +105,7 @@ function M.enable(bufnr)
       group = group,
       buffer = bufnr,
       callback = function()
-        update_cells(bufnr)
+        request_update(bufnr, vim.api.nvim_get_current_win())
       end,
     })
 
@@ -75,16 +114,16 @@ function M.enable(bufnr)
       group = group,
       buffer = bufnr,
       callback = function()
-        update_cells(bufnr)
+        request_update(bufnr, vim.api.nvim_get_current_win())
       end,
     })
 
     -- Update when window is resized
-    vim.api.nvim_create_autocmd('VimResized', {
+    vim.api.nvim_create_autocmd({ 'VimResized', 'WinResized' }, {
       group = group,
       buffer = bufnr,
       callback = function()
-        update_cells(bufnr)
+        request_update(bufnr, vim.api.nvim_get_current_win())
       end,
     })
   end
@@ -100,7 +139,7 @@ function M.enable(bufnr)
 
   -- Initial render only if manual_render is disabled
   if not config.options.manual_render then
-    update_cells(bufnr)
+    request_update(bufnr, vim.api.nvim_get_current_win())
   end
 end
 
@@ -115,6 +154,7 @@ function M.disable(bufnr)
 
   M.enabled_buffers[bufnr] = nil
   M.manual_render_visible[bufnr] = nil
+  M.pending_updates[bufnr] = nil
   render.clear(bufnr)
 
   -- Clear autocommands
@@ -149,7 +189,7 @@ function M.render(bufnr)
 
   -- Mark as visible and render cells
   M.manual_render_visible[bufnr] = true
-  update_cells(bufnr)
+  request_update(bufnr, vim.api.nvim_get_current_win())
 end
 
 --- Toggle manual rendering for the current buffer
@@ -167,7 +207,7 @@ function M.toggle_render(bufnr)
 
   if M.manual_render_visible[bufnr] then
     -- Show rendering
-    update_cells(bufnr)
+    request_update(bufnr, vim.api.nvim_get_current_win())
   else
     -- Hide rendering
     render.clear(bufnr)

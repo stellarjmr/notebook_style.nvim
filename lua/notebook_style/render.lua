@@ -24,7 +24,23 @@ end
 --- @param right string Right corner character
 --- @return string Complete border line
 local function make_border_line(width, left, middle, right)
+  width = math.max(width, 2)
   return left .. string.rep(middle, width - 2) .. right
+end
+
+--- Calculate the usable text width for a window.
+--- @param winid number Window id
+--- @return number Width available to buffer text
+local function get_usable_width(winid)
+  if not winid or not vim.api.nvim_win_is_valid(winid) then
+    winid = vim.api.nvim_get_current_win()
+  end
+
+  local win_width = vim.api.nvim_win_get_width(winid)
+  local info = vim.fn.getwininfo(winid)[1]
+  local text_offset = info and info.textoff or 0
+
+  return math.max(win_width - text_offset, 2)
 end
 
 --- Build a cell label string from cell data and number
@@ -64,14 +80,14 @@ end
 --- @param cell table Cell with start_line and end_line
 --- @param show_borders boolean Whether to show borders
 --- @param show_delimiter boolean Whether to show delimiter
---- @param frame_width number Baseline frame width (cells grow to fit longer lines)
+--- @param frame_width number Frame width
+--- @param right_margin number Empty columns between the right border and window edge
 --- @param cell_number number Cell number for display
-function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
+function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, right_margin, cell_number)
   local chars = get_border_chars()
 
   -- Build cell label with optional name
   local cell_marker_text = build_cell_label(cell, cell_number)
-  local cell_marker_width = vim.fn.strdisplaywidth(cell_marker_text)
 
   -- Hide the delimiter line if configured
   if not show_delimiter and config.options.hide_delimiter then
@@ -98,33 +114,8 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     return
   end
 
-  -- Precompute visible widths for each line in the cell so we can adjust the
-  -- frame if a line is longer than the standard width.
-  local line_widths = {}
-  local max_line_width = 0
-
-  for line = cell.start_line, cell.end_line do
-    local line_content = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1] or ''
-
-    local line_width
-    if line == cell.delimiter and not show_delimiter then
-      line_width = cell_marker_width
-    else
-      line_width = vim.fn.strdisplaywidth(line_content)
-    end
-
-    line_widths[line] = line_width
-    if line_width > max_line_width then
-      max_line_width = line_width
-    end
-  end
-
-  -- Guarantee the frame is wide enough for the current cell:
-  -- left border + content + eol anchor + right border.
-  local cell_frame_width = math.max(frame_width, max_line_width + 3)
-
   -- Top border - add it as a virtual line above the cell
-  local top_border = make_border_line(cell_frame_width, chars.top_left, chars.horizontal, chars.top_right)
+  local top_border = make_border_line(frame_width, chars.top_left, chars.horizontal, chars.top_right)
   -- Always anchor at the delimiter line and place above it so the border sits
   -- directly on top of the cell even at the top of the buffer.
   vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
@@ -136,14 +127,6 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
 
   -- Side borders for each line in the cell
   for line = cell.start_line, cell.end_line do
-    local line_width = line_widths[line] or 0
-
-    -- Calculate padding so the right border lines up with the top/bottom corners.
-    -- Layout: │ + content + (EOL anchor) + padding + │ = cell_frame_width,
-    -- so padding = cell_frame_width - line_width - 3.
-    local padding_needed = cell_frame_width - line_width - 3
-    local padding = string.rep(' ', math.max(0, padding_needed))
-
     -- Left border (inline at start of line, no trailing space to avoid cursor gap)
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
       virt_text = { { chars.vertical, 'NotebookCellBorder' } },
@@ -152,29 +135,31 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       priority = 200,
     })
 
-    if line == cell.delimiter and not show_delimiter then
-      -- Place the delimiter row's right border exactly under the corner, even
-      -- though the line itself is concealed (so there is no real EOL to anchor to).
-      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-        virt_text = { { chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'overlay',
-        virt_text_win_col = math.max(0, cell_frame_width - 1),
-        hl_mode = 'combine',
-        priority = 200,
-      })
-    else
-      -- Right border with padding (at end of line) - no extra space before │
-      vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
-        virt_text = { { padding .. chars.vertical, 'NotebookCellBorder' } },
-        virt_text_pos = 'eol',
-        hl_mode = 'combine',
-        priority = 200,
-      })
-    end
+    -- Left border for wrapped continuation lines. The lower priority lets the
+    -- inline mark define the first screen row while repeat_linebreak keeps the
+    -- border visible on wrapped rows.
+    vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+      virt_text = { { chars.vertical, 'NotebookCellBorder' } },
+      virt_text_win_col = 0,
+      virt_text_repeat_linebreak = true,
+      hl_mode = 'combine',
+      priority = 190,
+    })
+
+    -- Right border is aligned by Neovim instead of manual per-line padding.
+    -- When the configured frame is narrower than the usable text area, trailing
+    -- spaces keep the visible border inset from the window edge.
+    vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
+      virt_text = { { chars.vertical .. string.rep(' ', right_margin), 'NotebookCellBorder' } },
+      virt_text_pos = 'right_align',
+      virt_text_repeat_linebreak = true,
+      hl_mode = 'combine',
+      priority = 200,
+    })
   end
 
   -- Bottom border - add it as a virtual line below the cell
-  local bottom_border = make_border_line(cell_frame_width, chars.bottom_left, chars.horizontal, chars.bottom_right)
+  local bottom_border = make_border_line(frame_width, chars.bottom_left, chars.horizontal, chars.bottom_right)
   vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.end_line, 0, {
     virt_lines = {
       { { bottom_border, 'NotebookCellBorder' } },
@@ -186,7 +171,8 @@ end
 --- @param bufnr number Buffer number
 --- @param cells table List of cells
 --- @param mode string Current mode
-function M.render_all(bufnr, cells, mode)
+--- @param winid number Window id
+function M.render_all(bufnr, cells, mode, winid)
   M.clear(bufnr)
 
   -- Determine visibility based on mode
@@ -202,20 +188,22 @@ function M.render_all(bufnr, cells, mode)
     show_delimiter = false
   end
 
-  -- Calculate a consistent frame width for ALL cells based on window width
-  local win_width = vim.api.nvim_win_get_width(0)
+  -- Calculate a consistent frame width for ALL cells based on usable text area.
+  local usable_width = get_usable_width(winid)
   local percentage = config.options.cell_width_percentage or 80
   local min_width = config.options.min_cell_width or 40
-  local max_width = config.options.max_cell_width or 120
+  local max_width = math.min(config.options.max_cell_width or 120, usable_width)
 
-  -- Calculate frame width as percentage of window width
-  local calculated_width = math.floor(win_width * percentage / 100)
+  -- Calculate frame width as percentage of usable text width
+  local calculated_width = math.floor(usable_width * percentage / 100)
 
   -- Apply min/max constraints
-  local standard_frame_width = math.max(min_width, math.min(calculated_width, max_width))
+  local standard_frame_width = math.max(math.min(min_width, usable_width), math.min(calculated_width, max_width))
+  standard_frame_width = math.min(standard_frame_width, usable_width)
+  local right_margin = math.max(usable_width - standard_frame_width, 0)
 
   for i, cell in ipairs(cells) do
-    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i)
+    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, right_margin, i)
   end
 end
 
