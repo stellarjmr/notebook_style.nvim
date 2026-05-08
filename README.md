@@ -82,8 +82,8 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
 - `:NotebookStyleDisable` - Disable the plugin for current buffer
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
-- `:NotebookStyleRender` - Manually render cells (useful with `manual_render` option)
-- `:NotebookStyleToggleRender` - Toggle cell rendering on/off (useful with `manual_render` option)
+- `:NotebookStyleRender` - Show/re-render cells for the current buffer
+- `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
 - `:NotebookStyleRunCell` - Run the current Python cell and render output inline
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
@@ -127,7 +127,7 @@ require('notebook_style').setup({
   -- Visibility options
   hide_delimiter = true,           -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,    -- Hide borders in insert mode
-  manual_render = false,           -- If true, cells only render on <leader>rs
+  manual_render = false,           -- If true, start hidden and render on demand
 
   -- Cell marker (shown when delimiter is hidden)
   cell_marker = ' ',              -- Python nerd font icon
@@ -163,15 +163,17 @@ By default, cells render automatically as you type and move around. For better p
 
 ```lua
 require('notebook_style').setup({
-  manual_render = true,  -- Cells won't render automatically
+  manual_render = true,  -- Start hidden and render on demand
 })
 ```
 
 With manual rendering enabled:
-- Cells don't render automatically on text changes
-- Press `<leader>rs` to toggle cell rendering on/off
+- Cells start hidden and don't render automatically on text changes
+- Press `<leader>rs` to show cell rendering; press it again to hide rendering
 - Mode changes (insert/normal) still work correctly
 - Use `:NotebookStyleToggleRender` command as an alternative
+
+With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
 **Keybinding**: The plugin automatically sets up `<leader>rs` for toggling. You can customize it:
 
