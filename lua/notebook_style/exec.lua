@@ -1,5 +1,6 @@
 local cells = require('notebook_style.cells')
 local config = require('notebook_style.config')
+local image = require('notebook_style.image')
 local rpc = require('notebook_style.rpc')
 local state = require('notebook_style.state')
 
@@ -56,7 +57,17 @@ local function ensure_client()
     if not bufnr then
       return
     end
-    state.apply_event(bufnr, payload.cell_id, payload.event or {})
+    local output = state.apply_event(bufnr, payload.cell_id, payload.event or {})
+    if output and output.data and output.data['image/png'] then
+      local winid = vim.fn.bufwinid(bufnr)
+      local width = 80
+      if winid and winid > 0 then
+        width = math.max(vim.api.nvim_win_get_width(winid) - 4, 20)
+      end
+      image.ensure_transmitted(output, client, width, function()
+        refresh(bufnr)
+      end)
+    end
     refresh(bufnr)
   end)
 

@@ -222,6 +222,9 @@ end
 function M.setup(opts)
   config.setup(opts)
   exec.set_refresh(function(bufnr)
+    if config.options.manual_render then
+      M.manual_render_visible[bufnr] = true
+    end
     request_update(bufnr, vim.fn.bufwinid(bufnr))
   end)
 

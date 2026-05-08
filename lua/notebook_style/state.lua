@@ -67,37 +67,46 @@ function M.apply_event(bufnr, cell_id, event)
     local last = outputs[#outputs]
     if last and last.output_type == 'stream' and last.name == event.name then
       last.text = (last.text or '') .. (event.text or '')
+      return last
     else
-      table.insert(outputs, {
+      local output = {
         output_type = 'stream',
         name = event.name,
         text = event.text,
-      })
+      }
+      table.insert(outputs, output)
+      return output
     end
   elseif kind == 'execute_result' then
     state.outputs[cell_id] = state.outputs[cell_id] or {}
     state.execution_counts[cell_id] = event.execution_count
-    table.insert(state.outputs[cell_id], {
+    local output = {
       output_type = 'execute_result',
       execution_count = event.execution_count,
       data = event.data,
-    })
+    }
+    table.insert(state.outputs[cell_id], output)
+    return output
   elseif kind == 'display_data' then
     state.outputs[cell_id] = state.outputs[cell_id] or {}
-    table.insert(state.outputs[cell_id], {
+    local output = {
       output_type = 'display_data',
       data = event.data,
       metadata = event.metadata,
-    })
+    }
+    table.insert(state.outputs[cell_id], output)
+    return output
   elseif kind == 'error' then
     state.outputs[cell_id] = state.outputs[cell_id] or {}
-    table.insert(state.outputs[cell_id], {
+    local output = {
       output_type = 'error',
       ename = event.ename,
       evalue = event.evalue,
       traceback = event.traceback,
-    })
+    }
+    table.insert(state.outputs[cell_id], output)
     state.statuses[cell_id] = 'error'
+    return output
   elseif kind == 'clear_output' and not event.wait then
     state.outputs[cell_id] = {}
   elseif kind == 'execute_reply' then
