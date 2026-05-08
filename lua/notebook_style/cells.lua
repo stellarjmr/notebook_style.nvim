@@ -97,7 +97,9 @@ function M.get_cells(bufnr, delimiters, total_lines)
     end
 
     table.insert(cells, {
+      ordinal = i,
       delimiter = start_line,
+      delimiter_text = delimiter_content,
       start_line = start_line,
       end_line = end_line,
       name = name,
@@ -112,6 +114,19 @@ end
 --- @return boolean True if cell has content
 function M.is_valid_cell(cell)
   return cell.end_line > cell.start_line
+end
+
+--- Find the cell containing a 0-indexed line number
+--- @param cell_list table List of cells
+--- @param line number 0-indexed line number
+--- @return table|nil Cell containing the line
+function M.cell_at_line(cell_list, line)
+  for _, cell in ipairs(cell_list) do
+    if line >= cell.start_line and line <= cell.end_line then
+      return cell
+    end
+  end
+  return nil
 end
 
 return M
