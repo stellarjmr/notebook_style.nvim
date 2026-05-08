@@ -99,7 +99,6 @@ Inline execution is experimental and currently supports Python `.py` files with 
 
 Supported prebuilt targets:
 - `aarch64-apple-darwin` (Apple Silicon macOS)
-- `x86_64-apple-darwin` (Intel macOS)
 - `x86_64-unknown-linux-gnu` (Linux x86_64)
 - `aarch64-unknown-linux-gnu` (Linux ARM64)
 
