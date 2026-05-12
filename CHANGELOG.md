@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2026-05-13
+
+### Fixed
+- Restored Kitty/Ghostty virtual image placement creation and fit placement width to PNG aspect ratio so plot outputs align to the left edge instead of being centered inside an over-wide placeholder box.
+
 ## [0.4.1] - 2026-05-13
 
 ### Fixed

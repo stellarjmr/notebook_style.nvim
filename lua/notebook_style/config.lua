@@ -71,7 +71,8 @@ M.defaults = {
   output_max_lines = 200,
   image = {
     rows = 18,  -- Height reserved for image/png outputs, in terminal rows
-    cols = 60,  -- Width reserved for image/png outputs, in terminal columns
+    cols = 60,  -- Maximum width reserved for image/png outputs, in terminal columns
+    cell_height_to_width = 2.0,  -- Approximate terminal cell pixel aspect ratio
   },
 
   -- Default keymaps. Set a mapping to false to disable it.

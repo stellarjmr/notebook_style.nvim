@@ -44,6 +44,21 @@ local attached = false
 local attach_failed = false
 local rpc_client = nil
 local next_lua_image_id = 1000
+local BASE64_VALUES = {}
+
+for i = string.byte('A'), string.byte('Z') do
+  BASE64_VALUES[string.char(i)] = i - string.byte('A')
+end
+for i = string.byte('a'), string.byte('z') do
+  BASE64_VALUES[string.char(i)] = i - string.byte('a') + 26
+end
+for i = string.byte('0'), string.byte('9') do
+  BASE64_VALUES[string.char(i)] = i - string.byte('0') + 52
+end
+BASE64_VALUES['+'] = 62
+BASE64_VALUES['/'] = 63
+BASE64_VALUES['-'] = 62
+BASE64_VALUES['_'] = 63
 
 local function utf8(cp)
   if cp < 0x80 then
@@ -105,6 +120,8 @@ local function build_transmit_escape(image_id, b64, cols, rows)
     end
     pos = stop + 1
   end
+
+  table.insert(chunks, string.format('\27_Ga=p,U=1,i=%d,c=%d,r=%d,q=2\27\\', image_id, cols, rows))
 
   return table.concat(chunks)
 end
@@ -204,9 +221,86 @@ local function configured_size()
   return math.max(1, math.floor(cols)), math.max(1, math.floor(rows))
 end
 
-function M.pick_size(inner_width)
+local function configured_cell_height_to_width()
+  local image_opts = config.options.image or config.defaults.image
+  local default_image_opts = config.defaults.image or {}
+  local ratio = tonumber(image_opts and image_opts.cell_height_to_width)
+    or default_image_opts.cell_height_to_width
+    or 2.0
+  return math.max(0.1, ratio)
+end
+
+local function decode_base64_prefix(value, max_bytes)
+  local out = {}
+  local buffer = 0
+  local bits = 0
+
+  value = value:gsub('%s+', '')
+  for i = 1, #value do
+    local char = value:sub(i, i)
+    if char == '=' then
+      break
+    end
+
+    local decoded = BASE64_VALUES[char]
+    if decoded then
+      buffer = buffer * 64 + decoded
+      bits = bits + 6
+      while bits >= 8 do
+        bits = bits - 8
+        local byte = bit.band(bit.rshift(buffer, bits), 0xff)
+        table.insert(out, string.char(byte))
+        if #out >= max_bytes then
+          return table.concat(out)
+        end
+      end
+      if bits > 0 then
+        buffer = bit.band(buffer, bit.lshift(1, bits) - 1)
+      else
+        buffer = 0
+      end
+    end
+  end
+
+  return table.concat(out)
+end
+
+local function read_u32_be(bytes, offset)
+  local b1, b2, b3, b4 = bytes:byte(offset, offset + 3)
+  if not b4 then
+    return nil
+  end
+  return ((b1 * 256 + b2) * 256 + b3) * 256 + b4
+end
+
+local function png_dimensions(b64)
+  if type(b64) ~= 'string' or b64 == '' then
+    return nil, nil
+  end
+
+  local header = decode_base64_prefix(b64, 24)
+  if #header < 24 or header:sub(1, 8) ~= '\137PNG\r\n\26\n' or header:sub(13, 16) ~= 'IHDR' then
+    return nil, nil
+  end
+
+  return read_u32_be(header, 17), read_u32_be(header, 21)
+end
+
+local function fit_cols_to_png(max_cols, rows, b64)
+  local width, height = png_dimensions(b64)
+  if not width or not height or height <= 0 then
+    return max_cols
+  end
+
+  local cell_ratio = configured_cell_height_to_width()
+  local fitted = math.floor(rows * (width / height) * cell_ratio + 0.5)
+  return math.max(1, math.min(max_cols, fitted))
+end
+
+function M.pick_size(inner_width, b64)
   local configured_cols, rows = configured_size()
-  local cols = math.max(1, math.min(configured_cols, inner_width or configured_cols))
+  local max_cols = math.max(1, math.min(configured_cols, inner_width or configured_cols))
+  local cols = fit_cols_to_png(max_cols, rows, b64)
   return cols, rows
 end
 
@@ -228,7 +322,7 @@ function M.ensure_transmitted(output, client, inner_width, callback)
 
   output.inline_image = { status = 'pending' }
 
-  local cols, rows = M.pick_size(inner_width)
+  local cols, rows = M.pick_size(inner_width, b64)
   local function fallback(err)
     local image_id, fallback_err = transmit_from_lua(b64, cols, rows)
     if image_id then
