@@ -31,6 +31,20 @@ return {
     cell_width_percentage = 80,  -- Use 80% of window width
     min_cell_width = 40,
     max_cell_width = 120,
+
+    -- Inline image output size
+    image = {
+      rows = 18,
+      cols = 60,
+    },
+
+    -- Built-in keymaps. Set any mapping to false to disable it.
+    keymaps = {
+      toggle_render = '<leader>rs',
+      run_cell = '<leader>rr',
+      run_file = '<leader>rf',
+      run_cell_and_move = '<leader>rn',
+    },
   },
   keys = {
     { '<leader>ns', '<cmd>NotebookStyleToggle<cr>', desc = 'Toggle notebook style' },

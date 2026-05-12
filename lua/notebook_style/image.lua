@@ -1,6 +1,7 @@
 -- Minimal Kitty/Ghostty Unicode-placeholder image support.
 
 local M = {}
+local config = require('notebook_style.config')
 
 local DIACRITICS = {
   0x0305,0x030D,0x030E,0x0310,0x0312,0x033D,0x033E,0x033F,0x0346,0x034A,
@@ -37,8 +38,6 @@ local DIACRITICS = {
 
 
 local PLACEHOLDER = 0x10EEEE
-local DEFAULT_ROWS = 18
-local DEFAULT_COLS = 60
 local CHUNK_SIZE = 4096
 
 local attached = false
@@ -110,7 +109,22 @@ local function build_transmit_escape(image_id, b64, cols, rows)
   return table.concat(chunks)
 end
 
+local function in_tmux()
+  return vim.env.TMUX ~= nil
+    and vim.env.TMUX ~= ''
+    and not (vim.env.NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH ~= nil and vim.env.NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH ~= '')
+end
+
+local function tmux_wrap(bytes)
+  local doubled = bytes:gsub('\27', '\27\27')
+  return '\27Ptmux;' .. doubled .. '\27\\'
+end
+
 local function write_to_terminal(bytes)
+  if in_tmux() then
+    bytes = tmux_wrap(bytes)
+  end
+
   if vim.v.stderr and vim.v.stderr ~= 0 then
     local ok = pcall(vim.api.nvim_chan_send, vim.v.stderr, bytes)
     if ok then
@@ -181,9 +195,18 @@ function M.attach(client, callback)
   end)
 end
 
+local function configured_size()
+  local image_opts = config.options.image or config.defaults.image
+  local default_image_opts = config.defaults.image or {}
+  local cols = tonumber(image_opts and image_opts.cols) or default_image_opts.cols
+  local rows = tonumber(image_opts and image_opts.rows) or default_image_opts.rows
+
+  return math.max(1, math.floor(cols)), math.max(1, math.floor(rows))
+end
+
 function M.pick_size(inner_width)
-  local cols = math.max(10, math.min(DEFAULT_COLS, inner_width or DEFAULT_COLS))
-  local rows = DEFAULT_ROWS
+  local configured_cols, rows = configured_size()
+  local cols = math.max(1, math.min(configured_cols, inner_width or configured_cols))
   return cols, rows
 end
 
@@ -252,8 +275,9 @@ function M.placeholder_rows(inline_image)
   end
 
   local image_id = inline_image.image_id
-  local rows = inline_image.rows or DEFAULT_ROWS
-  local cols = inline_image.cols or DEFAULT_COLS
+  local default_cols, default_rows = configured_size()
+  local rows = inline_image.rows or default_rows
+  local cols = inline_image.cols or default_cols
   local hl = ensure_hl(image_id)
   local placeholder = utf8(PLACEHOLDER)
   local out = {}

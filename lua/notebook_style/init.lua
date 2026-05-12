@@ -11,6 +11,29 @@ local state = require('notebook_style.state')
 M.enabled_buffers = {}
 M.render_visible = {}  -- Track if rendering is currently visible per buffer
 M.pending_updates = {}
+M.active_keymaps = {}
+
+local function clear_keymaps()
+  for _, lhs in pairs(M.active_keymaps) do
+    pcall(vim.keymap.del, 'n', lhs)
+  end
+  M.active_keymaps = {}
+end
+
+local function set_keymap(name, rhs, desc)
+  local keymaps = config.options.keymaps
+  if keymaps == false then
+    return
+  end
+
+  local lhs = keymaps and keymaps[name]
+  if lhs == nil or lhs == false or lhs == '' then
+    return
+  end
+
+  vim.keymap.set('n', lhs, rhs, { desc = desc, silent = true })
+  M.active_keymaps[name] = lhs
+end
 
 --- Resolve a usable window for a buffer
 --- @param bufnr number Buffer number
@@ -266,6 +289,14 @@ function M.setup(opts)
     exec.run_cell(vim.api.nvim_get_current_buf())
   end, {})
 
+  vim.api.nvim_create_user_command('NotebookStyleRunFile', function()
+    exec.run_file(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleRunCellAndMove', function()
+    exec.run_cell_and_move(vim.api.nvim_get_current_buf())
+  end, {})
+
   vim.api.nvim_create_user_command('NotebookStyleKernelStart', function()
     exec.start_kernel(vim.api.nvim_get_current_buf())
   end, {})
@@ -278,14 +309,23 @@ function M.setup(opts)
     install.run()
   end, {})
 
-  -- Set up keybinding for render visibility toggle
-  vim.keymap.set('n', '<leader>rs', function()
-    M.toggle_render()
-  end, { desc = 'Toggle notebook cell rendering', silent = true })
+  clear_keymaps()
 
-  vim.keymap.set('n', '<leader>rr', function()
+  set_keymap('toggle_render', function()
+    M.toggle_render()
+  end, 'Toggle notebook cell rendering')
+
+  set_keymap('run_cell', function()
     exec.run_cell(vim.api.nvim_get_current_buf())
-  end, { desc = 'Run notebook cell', silent = true })
+  end, 'Run notebook cell')
+
+  set_keymap('run_file', function()
+    exec.run_file(vim.api.nvim_get_current_buf())
+  end, 'Run notebook file')
+
+  set_keymap('run_cell_and_move', function()
+    exec.run_cell_and_move(vim.api.nvim_get_current_buf())
+  end, 'Run notebook cell and move to next')
 end
 
 return M

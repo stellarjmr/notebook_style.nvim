@@ -69,6 +69,18 @@ M.defaults = {
   kernel_name = 'python3',
   auto_start_kernel = true,
   output_max_lines = 200,
+  image = {
+    rows = 18,  -- Height reserved for image/png outputs, in terminal rows
+    cols = 60,  -- Width reserved for image/png outputs, in terminal columns
+  },
+
+  -- Default keymaps. Set a mapping to false to disable it.
+  keymaps = {
+    toggle_render = '<leader>rs',
+    run_cell = '<leader>rr',
+    run_file = '<leader>rf',
+    run_cell_and_move = '<leader>rn',
+  },
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
