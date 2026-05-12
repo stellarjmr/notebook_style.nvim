@@ -9,6 +9,7 @@ local M = {}
 local client = nil
 local session_to_buf = {}
 local refresh = function() end
+local image_inner_width
 
 function M.set_refresh(fn)
   refresh = fn or refresh
@@ -59,12 +60,7 @@ local function ensure_client()
     end
     local output = state.apply_event(bufnr, payload.cell_id, payload.event or {})
     if output and output.data and output.data['image/png'] then
-      local winid = vim.fn.bufwinid(bufnr)
-      local width = 80
-      if winid and winid > 0 then
-        width = math.max(vim.api.nvim_win_get_width(winid) - 4, 20)
-      end
-      image.ensure_transmitted(output, client, width, function()
+      image.ensure_transmitted(output, client, image_inner_width(bufnr), function()
         refresh(bufnr)
       end)
     end
@@ -74,15 +70,42 @@ local function ensure_client()
   return client
 end
 
+local function output_inner_width(winid)
+  if not winid or winid <= 0 or not vim.api.nvim_win_is_valid(winid) then
+    return nil
+  end
+
+  local info = vim.fn.getwininfo(winid)[1]
+  local text_offset = info and info.textoff or 0
+  local frame_width = math.max(vim.api.nvim_win_get_width(winid) - text_offset, 2)
+  return math.max(frame_width - 2, 1)
+end
+
+image_inner_width = function(bufnr)
+  local winid = vim.fn.bufwinid(bufnr)
+  return output_inner_width(winid) or 80
+end
+
 local function current_cells(bufnr)
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
   local delimiters = cells.find_delimiters(bufnr, config.options.cell_delimiter)
   return cells.get_cells(bufnr, delimiters, total_lines)
 end
 
-local function current_cell(bufnr)
+local function current_cell_with_index(bufnr)
   local cursor_line = vim.api.nvim_win_get_cursor(0)[1] - 1
-  return cells.cell_at_line(current_cells(bufnr), cursor_line)
+  local cell_list = current_cells(bufnr)
+  for index, cell in ipairs(cell_list) do
+    if cursor_line >= cell.start_line and cursor_line <= cell.end_line then
+      return cell, index, cell_list
+    end
+  end
+  return nil, nil, cell_list
+end
+
+local function current_cell(bufnr)
+  local cell = current_cell_with_index(bufnr)
+  return cell
 end
 
 local function cell_source(bufnr, cell)
@@ -91,6 +114,54 @@ local function cell_source(bufnr, cell)
   end
   local lines = vim.api.nvim_buf_get_lines(bufnr, cell.start_line + 1, cell.end_line + 1, false)
   return table.concat(lines, '\n')
+end
+
+local function move_to_cell(bufnr, cell)
+  if not cell then
+    return false
+  end
+
+  local winid = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(winid) ~= bufnr then
+    winid = vim.fn.bufwinid(bufnr)
+  end
+  if not winid or winid <= 0 then
+    return false
+  end
+
+  local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local target = cell.end_line > cell.start_line and (cell.start_line + 1) or cell.start_line
+  target = math.max(0, math.min(target, line_count - 1))
+  vim.api.nvim_win_set_cursor(winid, { target + 1, 0 })
+  return true
+end
+
+local function execute_cell(bufnr, cell, callback)
+  local buffer_state = state.get(bufnr)
+  local cell_id = state.cell_id(bufnr, cell)
+  local source = cell_source(bufnr, cell)
+
+  ensure_client():call('update_cell_source', {
+    session_id = buffer_state.session_id,
+    cell_id = cell_id,
+    source = source,
+  }, function(err)
+    if err then
+      vim.notify('NotebookStyle update_cell_source failed: ' .. tostring(err), vim.log.levels.ERROR)
+      if callback then callback(err) end
+      return
+    end
+
+    ensure_client():call('execute', {
+      session_id = buffer_state.session_id,
+      cell_id = cell_id,
+    }, function(exec_err)
+      if exec_err then
+        vim.notify('NotebookStyle execute failed: ' .. tostring(exec_err), vim.log.levels.ERROR)
+      end
+      if callback then callback(exec_err) end
+    end)
+  end)
 end
 
 function M.start_kernel(bufnr, callback)
@@ -175,35 +246,69 @@ function M.run_cell(bufnr)
   end
 
   local function execute()
-    local buffer_state = state.get(bufnr)
-    local cell_id = state.cell_id(bufnr, cell)
-    local source = cell_source(bufnr, cell)
-
-    ensure_client():call('update_cell_source', {
-      session_id = buffer_state.session_id,
-      cell_id = cell_id,
-      source = source,
-    }, function(err)
-      if err then
-        vim.notify('NotebookStyle update_cell_source failed: ' .. tostring(err), vim.log.levels.ERROR)
-        return
-      end
-
-      ensure_client():call('execute', {
-        session_id = buffer_state.session_id,
-        cell_id = cell_id,
-      }, function(exec_err)
-        if exec_err then
-          vim.notify('NotebookStyle execute failed: ' .. tostring(exec_err), vim.log.levels.ERROR)
-        end
-      end)
-    end)
+    execute_cell(bufnr, cell)
   end
 
   if config.options.auto_start_kernel then
     M.start_kernel(bufnr, execute)
   else
     execute()
+  end
+end
+
+function M.run_file(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local runnable = {}
+  for _, cell in ipairs(current_cells(bufnr)) do
+    if cells.is_valid_cell(cell) then
+      table.insert(runnable, cell)
+    end
+  end
+
+  if #runnable == 0 then
+    vim.notify('NotebookStyle: no runnable cells found', vim.log.levels.WARN)
+    return
+  end
+
+  local function execute_all()
+    local index = 1
+    local function step()
+      local cell = runnable[index]
+      if not cell then
+        return
+      end
+      index = index + 1
+      execute_cell(bufnr, cell, function(err)
+        if not err then
+          step()
+        end
+      end)
+    end
+    step()
+  end
+
+  if config.options.auto_start_kernel then
+    M.start_kernel(bufnr, execute_all)
+  else
+    execute_all()
+  end
+end
+
+function M.run_cell_and_move(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local cell, index, cell_list = current_cell_with_index(bufnr)
+  if not cell then
+    vim.notify('NotebookStyle: cursor is not inside a cell', vim.log.levels.WARN)
+    return
+  end
+
+  M.run_cell(bufnr)
+
+  local next_cell = cell_list[index + 1]
+  if next_cell then
+    move_to_cell(bufnr, next_cell)
+  else
+    vim.notify('NotebookStyle: no next cell', vim.log.levels.INFO)
   end
 end
 

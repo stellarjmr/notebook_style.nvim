@@ -32,7 +32,7 @@ end
 
 local function divider_line(width, label)
   local chars = get_border_chars()
-  local main = chars.vertical .. '─ ' .. label .. ' '
+  local main = chars.vertical .. chars.horizontal .. ' ' .. label .. ' '
   local pad = width - vim.fn.strdisplaywidth(main) - 1
   return main .. string.rep(chars.horizontal, math.max(pad, 0)) .. chars.vertical
 end
@@ -100,7 +100,8 @@ local function wrap_line(line, width)
 end
 
 local function with_sides(text, hl, width)
-  local inner_width = math.max(width - 4, 1)
+  local chars = get_border_chars()
+  local inner_width = math.max(width - 2, 1)
   local display_width = vim.fn.strdisplaywidth(text)
   if display_width > inner_width then
     text = vim.fn.strcharpart(text, 0, inner_width)
@@ -108,17 +109,27 @@ local function with_sides(text, hl, width)
   end
   local pad = math.max(inner_width - display_width, 0)
   return {
-    { '│ ', 'NotebookCellBorder' },
+    { chars.vertical, 'NotebookCellBorder' },
     { text, hl },
-    { string.rep(' ', pad) .. ' │', 'NotebookCellBorder' },
+    { string.rep(' ', pad) .. chars.vertical, 'NotebookCellBorder' },
   }
 end
 
+local function chunks_display_width(chunks)
+  local display_width = 0
+  for _, chunk in ipairs(chunks or {}) do
+    display_width = display_width + vim.fn.strdisplaywidth(chunk[1] or '')
+  end
+  return display_width
+end
+
 local function image_with_sides(chunks, cols, width)
-  local pad = math.max(width - 4 - (cols or 0), 0)
-  local row = { { '│ ', 'NotebookCellBorder' } }
+  local chars = get_border_chars()
+  local image_width = math.max(chunks_display_width(chunks), cols or 0)
+  local pad = math.max(width - 2 - image_width, 0)
+  local row = { { chars.vertical, 'NotebookCellBorder' } }
   vim.list_extend(row, chunks)
-  table.insert(row, { string.rep(' ', pad) .. ' │', 'NotebookCellBorder' })
+  table.insert(row, { string.rep(' ', pad) .. chars.vertical, 'NotebookCellBorder' })
   return row
 end
 

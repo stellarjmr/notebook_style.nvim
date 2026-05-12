@@ -36,7 +36,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.3.3',
+  version = 'v0.4.0',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -80,7 +80,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.3.3' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.0' },
 })
 
 require('notebook_style').setup({})
@@ -144,6 +144,8 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleRender` - Show/re-render cells for the current buffer
 - `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
 - `:NotebookStyleRunCell` - Run the current Python cell and render output inline
+- `:NotebookStyleRunFile` - Run all Python cells in the current buffer
+- `:NotebookStyleRunCellAndMove` - Run the current cell and move to the next cell
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
 - `:NotebookStyleDownloadBackend` - Download the prebuilt backend for this release, or fall back to building from source
@@ -166,6 +168,14 @@ cargo build --release --manifest-path core/Cargo.toml
 Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
 Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+
+When running inside tmux, enable graphics passthrough in tmux:
+
+```tmux
+set -g allow-passthrough on
+```
+
+The plugin wraps Kitty graphics escapes automatically when `TMUX` is set. If you need to opt out, set `NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH=1`.
 
 ### Readability Tips
 
@@ -219,6 +229,18 @@ require('notebook_style').setup({
   kernel_name = 'python3',         -- Jupyter kernelspec name
   auto_start_kernel = true,        -- Start kernel on first :NotebookStyleRunCell
   output_max_lines = 200,          -- Truncate very large outputs
+  image = {
+    rows = 18,                     -- Height reserved for image/png outputs
+    cols = 60,                     -- Width reserved for image/png outputs
+  },
+
+  -- Default keymaps. Set a mapping to false to disable it.
+  keymaps = {
+    toggle_render = '<leader>rs',
+    run_cell = '<leader>rr',
+    run_file = '<leader>rf',
+    run_cell_and_move = '<leader>rn',
+  },
 
   -- Filetypes to enable the plugin for
   filetypes = { 'python' },
@@ -243,11 +265,17 @@ With manual rendering enabled:
 
 With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
-**Keybinding**: The plugin automatically sets up `<leader>rs` for toggling. You can customize it:
+**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, and `<leader>rn` for running the current cell and moving to the next cell. You can customize or disable them:
 
 ```lua
--- After setup, override the default keybinding
-vim.keymap.set('n', '<leader>nc', '<cmd>NotebookStyleToggleRender<cr>', { desc = 'Toggle cell rendering' })
+require('notebook_style').setup({
+  keymaps = {
+    toggle_render = '<leader>nc',
+    run_cell = '<leader>rr',
+    run_file = '<leader>rf',
+    run_cell_and_move = false,
+  },
+})
 ```
 
 ### Custom Border Styles

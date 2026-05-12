@@ -43,7 +43,7 @@ Using lazy.nvim: >lua
 With the optional inline execution backend installer: >lua
     {
       'stellarjmr/notebook_style.nvim',
-      version = 'v0.3.3',
+      version = 'v0.4.0',
       ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -82,7 +82,7 @@ autocommand before vim.pack.add(): >lua
     })
 
     vim.pack.add({
-      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.3.3' },
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.0' },
     })
 
     require('notebook_style').setup({})
@@ -164,6 +164,19 @@ cell marker (e.g., " #1 Data Loading").
     core/notebook-style-core first. Ghostty/Kitty use the Kitty graphics
     protocol; unsupported terminals show a text placeholder.
 
+    Inside tmux, enable passthrough with:
+        set -g allow-passthrough on
+    notebook_style wraps Kitty graphics escapes automatically when TMUX is set.
+    Set NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH=1 to opt out.
+
+                                                    *:NotebookStyleRunFile*
+:NotebookStyleRunFile
+    Run every non-empty Python cell in the current buffer.
+
+                                           *:NotebookStyleRunCellAndMove*
+:NotebookStyleRunCellAndMove
+    Run the current Python cell and move the cursor to the next cell.
+
                                                     *:NotebookStyleKernelStart*
 :NotebookStyleKernelStart
     Start the Python Jupyter kernel for the current buffer.
@@ -224,6 +237,18 @@ Default configuration: >lua
       kernel_name = 'python3',         -- Jupyter kernelspec name
       auto_start_kernel = true,        -- Start kernel on first run
       output_max_lines = 200,          -- Truncate very large outputs
+      image = {
+        rows = 18,                     -- Height for image/png outputs
+        cols = 60,                     -- Width for image/png outputs
+      },
+
+      -- Default keymaps. Set a mapping to false to disable it.
+      keymaps = {
+        toggle_render = '<leader>rs',
+        run_cell = '<leader>rr',
+        run_file = '<leader>rf',
+        run_cell_and_move = '<leader>rn',
+      },
 
       -- Render automatically by default. Set true to start hidden and render
       -- explicitly with :NotebookStyleRender or :NotebookStyleToggleRender.

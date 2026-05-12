@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-05-12
+
+### Added
+- Added `:NotebookStyleRunFile`, `:NotebookStyleRunCellAndMove`, configurable execution keymaps, and configurable image output rows/columns.
+
+### Fixed
+- Wrapped Kitty graphics escapes for tmux passthrough and tightened inline output alignment with the cell border.
+
 ## [0.3.3] - 2026-05-08
 
 ### Changed

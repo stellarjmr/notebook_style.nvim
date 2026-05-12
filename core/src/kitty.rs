@@ -31,6 +31,25 @@ pub struct KittyTty {
 
 struct KittyTtyInner {
     path: PathBuf,
+    in_tmux: bool,
+}
+
+fn tmux_passthrough_enabled() -> bool {
+    std::env::var_os("TMUX").is_some()
+        && std::env::var_os("NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH").is_none()
+}
+
+fn tmux_wrap(bytes: &[u8]) -> Vec<u8> {
+    let mut wrapped = Vec::with_capacity(bytes.len() * 2 + 16);
+    wrapped.extend_from_slice(b"\x1bPtmux;");
+    for &b in bytes {
+        wrapped.push(b);
+        if b == 0x1b {
+            wrapped.push(0x1b);
+        }
+    }
+    wrapped.extend_from_slice(b"\x1b\\");
+    wrapped
 }
 
 impl KittyTty {
@@ -42,7 +61,10 @@ impl KittyTty {
             .open(&p)
             .with_context(|| format!("cannot open tty {}", p.display()))?;
         Ok(Self {
-            inner: Arc::new(Mutex::new(KittyTtyInner { path: p })),
+            inner: Arc::new(Mutex::new(KittyTtyInner {
+                path: p,
+                in_tmux: tmux_passthrough_enabled(),
+            })),
         })
     }
 
@@ -52,7 +74,13 @@ impl KittyTty {
             .write(true)
             .open(&inner.path)
             .map_err(|e| anyhow!("tty open: {e}"))?;
-        f.write_all(bytes).map_err(|e| anyhow!("tty write: {e}"))?;
+        if inner.in_tmux {
+            let wrapped = tmux_wrap(bytes);
+            f.write_all(&wrapped)
+                .map_err(|e| anyhow!("tty write: {e}"))?;
+        } else {
+            f.write_all(bytes).map_err(|e| anyhow!("tty write: {e}"))?;
+        }
         f.flush().ok();
         Ok(())
     }
@@ -123,5 +151,11 @@ mod tests {
     fn open_nonexistent_tty_fails() {
         let r = KittyTty::open(Some(PathBuf::from("/nonexistent/tty")));
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn tmux_wrap_doubles_internal_escapes() {
+        let wrapped = tmux_wrap(b"\x1b_Gq=2;\x1b\\");
+        assert_eq!(wrapped, b"\x1bPtmux;\x1b\x1b_Gq=2;\x1b\x1b\\\x1b\\");
     }
 }
