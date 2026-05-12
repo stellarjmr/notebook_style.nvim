@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.3.3
+Version: 0.4.1
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -27,6 +27,7 @@ Features:
   - Fully customizable colors and border styles
   - Non-intrusive rendering using native extmarks
   - Experimental inline Python cell execution through a Rust Jupyter backend
+  - .ipynb notebook workflow through Jupytext-backed # %% Python buffers
   - Lightweight and efficient
 
 ==============================================================================
@@ -43,7 +44,7 @@ Using lazy.nvim: >lua
 With the optional inline execution backend installer: >lua
     {
       'stellarjmr/notebook_style.nvim',
-      version = 'v0.4.0',
+      version = 'v0.4.1',
       ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -82,7 +83,7 @@ autocommand before vim.pack.add(): >lua
     })
 
     vim.pack.add({
-      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.0' },
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.1' },
     })
 
     require('notebook_style').setup({})
@@ -107,6 +108,12 @@ Using packer.nvim: >lua
 3. USAGE                                               *notebook_style-usage*
 
 The plugin automatically activates for Python files with # %% delimiters.
+
+.ipynb notebooks are supported when Jupytext is installed and configured so
+Neovim edits the notebook as percent-style Python with # %% cell delimiters.
+notebook_style.nvim works on that Python buffer; it does not parse raw .ipynb
+JSON directly. If your Jupytext integration uses a filetype other than python,
+add that filetype to the filetypes setup option.
 
 Cell format: >python
     # %% Data Loading

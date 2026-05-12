@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-05-13
+
+### Fixed
+- Fixed Kitty/Ghostty image output placement by transmitting images without creating a cursor-position terminal placement.
+
+### Changed
+- Documented `.ipynb` notebook support through Jupytext-backed `# %%` Python buffers.
+
 ## [0.4.0] - 2026-05-12
 
 ### Added

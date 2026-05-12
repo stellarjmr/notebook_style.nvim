@@ -52,6 +52,38 @@ fn tmux_wrap(bytes: &[u8]) -> Vec<u8> {
     wrapped
 }
 
+fn build_transmit_chunks(id: u32, png: &[u8]) -> Vec<String> {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(png);
+    let chunk = 4096;
+    let mut pos = 0;
+    let total = b64.len();
+    let mut first = true;
+    let mut chunks = Vec::new();
+
+    while pos < total {
+        let end = (pos + chunk).min(total);
+        let part = &b64[pos..end];
+        let more = if end < total { 1 } else { 0 };
+        if first {
+            // a=t: transmit only; Neovim's Unicode placeholders decide where
+            // the terminal draws the image.
+            // f=100: PNG
+            // U=1: Unicode placeholder mode
+            // q=2: suppress responses
+            chunks.push(format!(
+                "\x1b_Ga=t,f=100,i={},U=1,q=2,m={};{}\x1b\\",
+                id, more, part
+            ));
+            first = false;
+        } else {
+            chunks.push(format!("\x1b_Gm={},q=2;{}\x1b\\", more, part));
+        }
+        pos = end;
+    }
+
+    chunks
+}
+
 impl KittyTty {
     pub fn open(path: Option<PathBuf>) -> Result<Self> {
         let p = path.unwrap_or_else(|| PathBuf::from("/dev/tty"));
@@ -85,7 +117,7 @@ impl KittyTty {
         Ok(())
     }
 
-    /// Transmit a PNG to the terminal in virtual-placement mode.
+    /// Transmit a PNG to the terminal for Unicode-placeholder rendering.
     /// Returns the image_id the caller should use when emitting placeholders.
     pub fn transmit_png(&self, png: &[u8], cols: u32, rows: u32) -> Result<u32> {
         let id = alloc_id();
@@ -93,33 +125,9 @@ impl KittyTty {
         Ok(id)
     }
 
-    pub fn transmit_png_with_id(&self, id: u32, png: &[u8], cols: u32, rows: u32) -> Result<()> {
-        let b64 = base64::engine::general_purpose::STANDARD.encode(png);
-        let chunk = 4096;
-        let mut pos = 0;
-        let total = b64.len();
-        let mut first = true;
-        let mut buf = String::with_capacity(8192);
-        while pos < total {
-            let end = (pos + chunk).min(total);
-            let part = &b64[pos..end];
-            let more = if end < total { 1 } else { 0 };
-            buf.clear();
-            if first {
-                // a=T: transmit and create a virtual placement.
-                // f=100: PNG
-                // U=1: virtual placement (Unicode placeholder mode)
-                // q=2: suppress responses
-                buf.push_str(&format!(
-                    "\x1b_Ga=T,f=100,i={},U=1,c={},r={},q=2,m={};{}\x1b\\",
-                    id, cols, rows, more, part
-                ));
-                first = false;
-            } else {
-                buf.push_str(&format!("\x1b_Gm={},q=2;{}\x1b\\", more, part));
-            }
-            self.write(buf.as_bytes())?;
-            pos = end;
+    pub fn transmit_png_with_id(&self, id: u32, png: &[u8], _cols: u32, _rows: u32) -> Result<()> {
+        for chunk in build_transmit_chunks(id, png) {
+            self.write(chunk.as_bytes())?;
         }
         Ok(())
     }
@@ -157,5 +165,16 @@ mod tests {
     fn tmux_wrap_doubles_internal_escapes() {
         let wrapped = tmux_wrap(b"\x1b_Gq=2;\x1b\\");
         assert_eq!(wrapped, b"\x1bPtmux;\x1b\x1b_Gq=2;\x1b\x1b\\\x1b\\");
+    }
+
+    #[test]
+    fn transmit_escape_does_not_create_cursor_placement() {
+        let chunks = build_transmit_chunks(42, b"png-bytes");
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].starts_with("\x1b_Ga=t,"));
+        assert!(chunks[0].contains("U=1"));
+        assert!(!chunks[0].contains("a=T"));
+        assert!(!chunks[0].contains(",c="));
+        assert!(!chunks[0].contains(",r="));
     }
 }
