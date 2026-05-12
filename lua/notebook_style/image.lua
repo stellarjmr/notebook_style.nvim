@@ -97,7 +97,7 @@ local function build_transmit_escape(image_id, b64, cols, rows)
     if first then
       table.insert(
         chunks,
-        string.format('\27_Ga=T,U=1,f=100,i=%d,c=%d,r=%d,q=2,m=%d;%s\27\\', image_id, cols, rows, more, chunk)
+        string.format('\27_Ga=t,U=1,f=100,i=%d,q=2,m=%d;%s\27\\', image_id, more, chunk)
       )
       first = false
     else

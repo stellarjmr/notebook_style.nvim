@@ -14,6 +14,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 - **Non-intrusive**: Borders don't obscure code and automatically adjust to window width
 - **Lightweight**: Uses Neovim's native extmarks for efficient rendering
 - **Inline Cell Execution (experimental)**: Run Python cells through a Rust Jupyter backend and render text outputs inline
+- **Notebook Workflow**: Works with `.ipynb` notebooks when Jupytext exposes them as `# %%` Python buffers
 
 ## Installation
 
@@ -36,7 +37,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.4.0',
+  version = 'v0.4.1',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -80,7 +81,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.0' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.1' },
 })
 
 require('notebook_style').setup({})
@@ -112,6 +113,12 @@ EOF
 ## Usage
 
 The plugin automatically activates for Python files when you have `# %%` cell delimiters.
+
+### `.ipynb` Notebooks
+
+`.ipynb` notebooks are supported when you install and configure [Jupytext](https://jupytext.readthedocs.io/) so Neovim edits the notebook as percent-style Python with `# %%` cell delimiters. notebook_style.nvim works on that Python buffer and does not parse raw `.ipynb` JSON directly.
+
+If your Jupytext integration uses a filetype other than `python`, add that filetype to `filetypes` in `setup()`.
 
 ### Cell Delimiter Format
 
@@ -152,7 +159,7 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 
 ### Inline Execution Backend
 
-Inline execution is experimental and currently supports Python `.py` files with `# %%` cells. On tagged releases, the install hooks above download a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
+Inline execution is experimental and supports Python buffers with `# %%` cells, including `.py` files and `.ipynb` notebooks opened through Jupytext. On tagged releases, the install hooks above download a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
 
 Supported prebuilt targets:
 - `aarch64-apple-darwin` (Apple Silicon macOS)
@@ -416,6 +423,7 @@ vim.keymap.set('n', '<leader>ns', '<cmd>NotebookStyleToggle<cr>', { desc = 'Togg
 
 - Neovim >= 0.8.0
 - A font that supports Unicode box-drawing characters (most modern terminal fonts)
+- Jupytext if you want to edit `.ipynb` notebooks as `# %%` Python buffers
 
 ## Similar Projects
 

@@ -737,7 +737,7 @@ impl Server {
         Ok(json!({ "ok": true }))
     }
 
-    /// Transmit a base64 PNG to the terminal in virtual-placement mode.
+    /// Transmit a base64 PNG to the terminal for Unicode-placeholder rendering.
     /// Returns the assigned image_id; frontend uses it for the placeholder color.
     async fn kitty_transmit(&self, p: Json) -> Result<Json> {
         let b64 = p
