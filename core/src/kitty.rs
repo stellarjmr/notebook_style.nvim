@@ -52,7 +52,7 @@ fn tmux_wrap(bytes: &[u8]) -> Vec<u8> {
     wrapped
 }
 
-fn build_transmit_chunks(id: u32, png: &[u8]) -> Vec<String> {
+fn build_transmit_chunks(id: u32, png: &[u8], cols: u32, rows: u32) -> Vec<String> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
     let chunk = 4096;
     let mut pos = 0;
@@ -80,6 +80,11 @@ fn build_transmit_chunks(id: u32, png: &[u8]) -> Vec<String> {
         }
         pos = end;
     }
+
+    chunks.push(format!(
+        "\x1b_Ga=p,U=1,i={},c={},r={},q=2\x1b\\",
+        id, cols, rows
+    ));
 
     chunks
 }
@@ -125,8 +130,8 @@ impl KittyTty {
         Ok(id)
     }
 
-    pub fn transmit_png_with_id(&self, id: u32, png: &[u8], _cols: u32, _rows: u32) -> Result<()> {
-        for chunk in build_transmit_chunks(id, png) {
+    pub fn transmit_png_with_id(&self, id: u32, png: &[u8], cols: u32, rows: u32) -> Result<()> {
+        for chunk in build_transmit_chunks(id, png, cols, rows) {
             self.write(chunk.as_bytes())?;
         }
         Ok(())
@@ -169,12 +174,13 @@ mod tests {
 
     #[test]
     fn transmit_escape_does_not_create_cursor_placement() {
-        let chunks = build_transmit_chunks(42, b"png-bytes");
-        assert_eq!(chunks.len(), 1);
+        let chunks = build_transmit_chunks(42, b"png-bytes", 48, 18);
+        assert_eq!(chunks.len(), 2);
         assert!(chunks[0].starts_with("\x1b_Ga=t,"));
         assert!(chunks[0].contains("U=1"));
         assert!(!chunks[0].contains("a=T"));
         assert!(!chunks[0].contains(",c="));
         assert!(!chunks[0].contains(",r="));
+        assert_eq!(chunks[1], "\x1b_Ga=p,U=1,i=42,c=48,r=18,q=2\x1b\\");
     }
 }

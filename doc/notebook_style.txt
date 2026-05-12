@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.4.1
+Version: 0.4.2
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -44,7 +44,7 @@ Using lazy.nvim: >lua
 With the optional inline execution backend installer: >lua
     {
       'stellarjmr/notebook_style.nvim',
-      version = 'v0.4.1',
+      version = 'v0.4.2',
       ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -83,7 +83,7 @@ autocommand before vim.pack.add(): >lua
     })
 
     vim.pack.add({
-      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.1' },
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.2' },
     })
 
     require('notebook_style').setup({})
@@ -176,6 +176,11 @@ cell marker (e.g., " #1 Data Loading").
     notebook_style wraps Kitty graphics escapes automatically when TMUX is set.
     Set NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH=1 to opt out.
 
+    image.cols is a maximum width. The plugin reads PNG dimensions and narrows
+    the virtual placement when needed so normal plots are not centered inside
+    an over-wide placeholder box. Adjust image.cell_height_to_width if your
+    terminal font has an unusual cell aspect ratio.
+
                                                     *:NotebookStyleRunFile*
 :NotebookStyleRunFile
     Run every non-empty Python cell in the current buffer.
@@ -246,7 +251,8 @@ Default configuration: >lua
       output_max_lines = 200,          -- Truncate very large outputs
       image = {
         rows = 18,                     -- Height for image/png outputs
-        cols = 60,                     -- Width for image/png outputs
+        cols = 60,                     -- Max width for image/png outputs
+        cell_height_to_width = 2.0,     -- Approximate terminal cell ratio
       },
 
       -- Default keymaps. Set a mapping to false to disable it.

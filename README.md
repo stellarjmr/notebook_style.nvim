@@ -37,7 +37,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.4.1',
+  version = 'v0.4.2',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -81,7 +81,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.1' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.4.2' },
 })
 
 require('notebook_style').setup({})
@@ -184,6 +184,8 @@ set -g allow-passthrough on
 
 The plugin wraps Kitty graphics escapes automatically when `TMUX` is set. If you need to opt out, set `NOTEBOOK_STYLE_DISABLE_TMUX_PASSTHROUGH=1`.
 
+PNG outputs are rendered with Kitty Unicode placeholders. `image.cols` is treated as a maximum width: notebook_style.nvim reads the PNG dimensions and narrows the virtual placement when needed so terminals do not center normal plot images inside an over-wide placeholder box. If your terminal font has an unusual cell shape, adjust `image.cell_height_to_width`.
+
 ### Readability Tips
 
 - The boundary lines of the first and last rows may be hidden by the buffer. Scroll to the top/bottom of the page to display them.
@@ -238,7 +240,8 @@ require('notebook_style').setup({
   output_max_lines = 200,          -- Truncate very large outputs
   image = {
     rows = 18,                     -- Height reserved for image/png outputs
-    cols = 60,                     -- Width reserved for image/png outputs
+    cols = 60,                     -- Max width reserved for image/png outputs
+    cell_height_to_width = 2.0,     -- Approximate terminal cell pixel ratio
   },
 
   -- Default keymaps. Set a mapping to false to disable it.

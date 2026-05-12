@@ -36,6 +36,7 @@ return {
     image = {
       rows = 18,
       cols = 60,
+      cell_height_to_width = 2.0,
     },
 
     -- Built-in keymaps. Set any mapping to false to disable it.
