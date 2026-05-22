@@ -33,6 +33,9 @@ return {
     max_cell_width = 120,
 
     -- Inline image output size
+    -- auto_venv defaults to true, so local .venv/bin/python is preferred when
+    -- it can import ipykernel. Set false to always use kernel_name.
+    auto_venv = true,
     image = {
       rows = 18,
       cols = 60,

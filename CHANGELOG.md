@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Added `auto_venv` inline execution startup: project-local `.venv` Python interpreters with `ipykernel` are preferred over the configured kernelspec by default.
+
 ## [0.4.2] - 2026-05-13
 
 ### Fixed

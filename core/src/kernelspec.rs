@@ -101,6 +101,31 @@ pub fn discover_by_name(name: &str) -> Option<KernelSpec> {
     discover_all().into_iter().find(|s| s.name == name)
 }
 
+pub fn from_python_path(python_path: PathBuf) -> KernelSpec {
+    let env_root = python_path
+        .parent()
+        .and_then(|bin_dir| bin_dir.parent())
+        .map(PathBuf::from)
+        .or_else(|| python_path.parent().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("."));
+    KernelSpec {
+        name: "local-venv".to_string(),
+        path: env_root,
+        argv: vec![
+            python_path.to_string_lossy().into_owned(),
+            "-m".to_string(),
+            "ipykernel_launcher".to_string(),
+            "-f".to_string(),
+            "{connection_file}".to_string(),
+        ],
+        display_name: "Local .venv".to_string(),
+        language: "python".to_string(),
+        interrupt_mode: None,
+        env: HashMap::new(),
+        metadata: serde_json::Value::Null,
+    }
+}
+
 /// Resolve a kernelspec name with sensible fallbacks.
 ///
 /// Match priority:
@@ -155,5 +180,18 @@ mod tests {
     #[test]
     fn discover_does_not_panic() {
         let _ = discover_all();
+    }
+
+    #[test]
+    fn python_path_kernelspec_launches_ipykernel() {
+        let spec = from_python_path(PathBuf::from("/tmp/project/.venv/bin/python"));
+        assert_eq!(spec.name, "local-venv");
+        assert_eq!(spec.path, PathBuf::from("/tmp/project/.venv"));
+        assert_eq!(spec.argv[0], "/tmp/project/.venv/bin/python");
+        assert_eq!(spec.argv[1], "-m");
+        assert_eq!(spec.argv[2], "ipykernel_launcher");
+        assert_eq!(spec.argv[3], "-f");
+        assert_eq!(spec.argv[4], "{connection_file}");
+        assert_eq!(spec.language, "python");
     }
 }

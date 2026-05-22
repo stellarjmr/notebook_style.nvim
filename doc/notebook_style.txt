@@ -171,6 +171,13 @@ cell marker (e.g., " #1 Data Loading").
     core/notebook-style-core first. Ghostty/Kitty use the Kitty graphics
     protocol; unsupported terminals show a text placeholder.
 
+    By default, auto_venv checks for a project-local .venv next to the current
+    file or in a parent directory. If .venv/bin/python (or
+    .venv/Scripts/python.exe on Windows) can import ipykernel, that Python is
+    used directly as the kernel interpreter. This avoids creating a registered
+    Jupyter kernelspec per project. Set auto_venv = false to always use
+    kernel_name instead.
+
     Inside tmux, enable passthrough with:
         set -g allow-passthrough on
     notebook_style wraps Kitty graphics escapes automatically when TMUX is set.
@@ -247,6 +254,7 @@ Default configuration: >lua
       -- Inline execution options
       backend_cmd = nil,               -- Auto-detect notebook-style-core
       kernel_name = 'python3',         -- Jupyter kernelspec name
+      auto_venv = true,                -- Prefer local .venv with ipykernel
       auto_start_kernel = true,        -- Start kernel on first run
       output_max_lines = 200,          -- Truncate very large outputs
       image = {

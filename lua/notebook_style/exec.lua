@@ -36,6 +36,54 @@ local function default_backend_cmd()
   return { root .. '/core/target/release/notebook-style-core' }
 end
 
+local function compact_message(value)
+  return tostring(value or ''):gsub('^%s+', ''):gsub('%s+$', ''):gsub('%s+', ' '):sub(1, 200)
+end
+
+local function find_local_venv_python(start_dir)
+  if type(start_dir) ~= 'string' or start_dir == '' then
+    return nil
+  end
+
+  local dir = vim.fn.fnamemodify(start_dir, ':p'):gsub('/+$', '')
+  if dir == '' then
+    dir = '/'
+  end
+  local rel_python = package.config:sub(1, 1) == '\\' and '.venv/Scripts/python.exe' or '.venv/bin/python'
+
+  while dir ~= '' do
+    local venv_dir = dir .. '/.venv'
+    if vim.fn.isdirectory(venv_dir) == 1 then
+      local python_path = dir .. '/' .. rel_python
+      if vim.fn.executable(python_path) ~= 1 then
+        return nil, '.venv found at ' .. venv_dir .. ', but its Python is not executable'
+      end
+
+      local output = vim.fn.system({ python_path, '-c', 'import ipykernel' })
+      if vim.v.shell_error == 0 then
+        return python_path
+      end
+
+      local detail = compact_message(output)
+      if detail ~= '' then
+        detail = ': ' .. detail
+      end
+      return nil, python_path .. ' cannot import ipykernel' .. detail
+    end
+
+    local parent = vim.fn.fnamemodify(dir, ':h')
+    if parent == dir or parent == '' then
+      break
+    end
+    dir = parent:gsub('/+$', '')
+    if dir == '' then
+      dir = '/'
+    end
+  end
+
+  return nil
+end
+
 local function ensure_client()
   if client and client.job then
     return client
@@ -178,11 +226,19 @@ function M.start_kernel(bufnr, callback)
   local path = vim.api.nvim_buf_get_name(bufnr)
   local cwd = path ~= '' and vim.fn.fnamemodify(path, ':p:h') or vim.loop.cwd()
   local cl = ensure_client()
+  local python_path, auto_venv_warning
+  if config.options.auto_venv ~= false then
+    python_path, auto_venv_warning = find_local_venv_python(cwd)
+    if auto_venv_warning then
+      vim.notify('NotebookStyle auto_venv skipped: ' .. auto_venv_warning, vim.log.levels.WARN)
+    end
+  end
 
   local function start_session(session_id)
     cl:call('start_kernel', {
       session_id = session_id,
       kernel_name = config.options.kernel_name,
+      python_path = python_path,
       cwd = cwd,
     }, function(start_err, start_result)
       if start_err then

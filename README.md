@@ -174,7 +174,9 @@ cargo build --release --manifest-path core/Cargo.toml
 
 Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
-Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a `python3` Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a Python Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+
+By default, `auto_venv = true` makes kernel startup prefer a project-local `.venv`: notebook_style.nvim walks up from the current file's directory, looks for `.venv/bin/python` (or `.venv/Scripts/python.exe` on Windows), and uses it directly when it can import `ipykernel`. This avoids registering a Jupyter kernelspec for every project. If a local `.venv` exists but cannot import `ipykernel`, install it with that environment's Python (for example, `.venv/bin/python -m pip install ipykernel`) or set `auto_venv = false` to always use `kernel_name`.
 
 When running inside tmux, enable graphics passthrough in tmux:
 
@@ -236,6 +238,7 @@ require('notebook_style').setup({
   -- Inline execution options
   backend_cmd = nil,               -- Auto-detect core/target/{release,debug}/notebook-style-core
   kernel_name = 'python3',         -- Jupyter kernelspec name
+  auto_venv = true,                -- Prefer project-local .venv with ipykernel
   auto_start_kernel = true,        -- Start kernel on first :NotebookStyleRunCell
   output_max_lines = 200,          -- Truncate very large outputs
   image = {

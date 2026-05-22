@@ -67,6 +67,7 @@ M.defaults = {
   -- Inline execution options
   backend_cmd = nil,  -- Command list for notebook-style-core; auto-detected when nil
   kernel_name = 'python3',
+  auto_venv = true,  -- Prefer a project-local .venv with ipykernel when starting Python kernels
   auto_start_kernel = true,
   output_max_lines = 200,
   image = {
