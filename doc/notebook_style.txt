@@ -12,7 +12,8 @@ CONTENTS                                            *notebook_style-contents*
 3. Usage ................................... |notebook_style-usage|
 4. Commands ................................ |notebook_style-commands|
 5. Configuration ........................... |notebook_style-configuration|
-6. Highlights .............................. |notebook_style-highlights|
+6. Development Tests ....................... |notebook_style-tests|
+7. Highlights .............................. |notebook_style-highlights|
 
 ==============================================================================
 1. INTRODUCTION                                 *notebook_style-introduction*
@@ -352,7 +353,20 @@ Examples: >lua
 <
 
 ==============================================================================
-6. HIGHLIGHTS                                     *notebook_style-highlights*
+6. DEVELOPMENT TESTS                                  *notebook_style-tests*
+
+From the repository root, run: >sh
+    tests/run_all.sh
+<
+
+The script checks Rust formatting, runs cargo test, builds the release backend,
+and runs headless Neovim Lua smoke tests. The Lua suite exercises setup,
+delimiter detection, rendering extmarks, and auto_venv when python3 can import
+ipykernel. If ipykernel is unavailable, the auto_venv integration check is
+reported as skipped.
+
+==============================================================================
+7. HIGHLIGHTS                                     *notebook_style-highlights*
 
                                                 *hl-NotebookCellBorder*
 NotebookCellBorder

@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Added `auto_venv` inline execution startup: project-local `.venv` Python interpreters with `ipykernel` are preferred over the configured kernelspec by default.
+- Added `tests/run_all.sh` with Rust checks, release backend build, and headless Neovim Lua smoke tests.
 
 ## [0.4.2] - 2026-05-13
 

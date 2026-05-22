@@ -431,6 +431,16 @@ vim.keymap.set('n', '<leader>ns', '<cmd>NotebookStyleToggle<cr>', { desc = 'Togg
 - A font that supports Unicode box-drawing characters (most modern terminal fonts)
 - Jupytext if you want to edit `.ipynb` notebooks as `# %%` Python buffers
 
+## Development Tests
+
+Run the focused local test suite with:
+
+```sh
+tests/run_all.sh
+```
+
+This checks Rust formatting, runs `cargo test`, builds the release backend, and runs headless Neovim Lua smoke tests. The Lua suite also exercises `auto_venv` when `python3` can import `ipykernel`; otherwise that integration check is reported as skipped.
+
 ## Similar Projects
 
 - [jupytext.nvim](https://github.com/GCBallesteros/jupytext.nvim) - Edit Jupyter notebooks in Neovim
