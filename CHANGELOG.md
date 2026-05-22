@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.5.1] - 2026-05-22
 
 ### Fixed
 - Fixed the first cell's top border being clipped when the file is scrolled to the very top.
