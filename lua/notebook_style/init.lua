@@ -125,6 +125,16 @@ function M.enable(bufnr)
     end,
   })
 
+  vim.api.nvim_create_autocmd('WinScrolled', {
+    group = group,
+    callback = function(args)
+      local winid = tonumber(args.match) or vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_is_valid(winid) and vim.api.nvim_win_get_buf(winid) == bufnr then
+        request_update(bufnr, winid)
+      end
+    end,
+  })
+
   -- Only set up auto-update autocommands if manual_render is disabled
   if not config.options.manual_render then
     -- Update on text changes

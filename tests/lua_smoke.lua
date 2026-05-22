@@ -109,6 +109,37 @@ test('render creates and clears cell extmarks', function()
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
+test('first cell top border is visible at file top', function()
+  local notebook = require('notebook_style')
+  local render = require('notebook_style.render')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% Top',
+    'value = 1',
+  })
+  vim.api.nvim_set_current_buf(buf)
+
+  notebook.enable(buf)
+  notebook.render(buf)
+  assert_true(vim.wait(1000, function()
+    local marks = vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })
+    for _, mark in ipairs(marks) do
+      local details = mark[4] or {}
+      for _, chunk in ipairs(details.virt_text or {}) do
+        local text = chunk[1] or ''
+        if text:find('^┌') and text:find('#1 Top', 1, true) then
+          return true
+        end
+      end
+    end
+    return false
+  end, 20), 'topline fallback border should overlay line 1')
+
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
 test('auto_venv starts a local venv kernel when available', function()
   local backend = backend_path()
   if vim.fn.executable(backend) ~= 1 then

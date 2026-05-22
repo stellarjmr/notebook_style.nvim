@@ -188,10 +188,6 @@ The plugin wraps Kitty graphics escapes automatically when `TMUX` is set. If you
 
 PNG outputs are rendered with Kitty Unicode placeholders. `image.cols` is treated as a maximum width: notebook_style.nvim reads the PNG dimensions and narrows the virtual placement when needed so terminals do not center normal plot images inside an over-wide placeholder box. If your terminal font has an unusual cell shape, adjust `image.cell_height_to_width`.
 
-### Readability Tips
-
-- The boundary lines of the first and last rows may be hidden by the buffer. Scroll to the top/bottom of the page to display them.
-
 ## Configuration
 
 Default configuration:

@@ -30,6 +30,49 @@ local function make_border_line(width, left, middle, right)
   return left .. string.rep(middle, width - 2) .. right
 end
 
+local function truncate_display(text, max_width)
+  if max_width <= 0 then
+    return ''
+  end
+
+  local out = {}
+  local width = 0
+  for index = 0, vim.fn.strchars(text) - 1 do
+    local char = vim.fn.strcharpart(text, index, 1)
+    local char_width = vim.fn.strdisplaywidth(char)
+    if width + char_width > max_width then
+      break
+    end
+    table.insert(out, char)
+    width = width + char_width
+  end
+
+  return table.concat(out, '')
+end
+
+local function make_titled_top_border(width, label)
+  local chars = get_border_chars()
+  width = math.max(width, 2)
+  local inner_width = math.max(width - 2, 0)
+  local title = vim.trim(label or '')
+
+  if title == '' or inner_width == 0 then
+    return make_border_line(width, chars.top_left, chars.horizontal, chars.top_right)
+  end
+
+  title = truncate_display(' ' .. title .. ' ', inner_width)
+  local title_width = vim.fn.strdisplaywidth(title)
+  local remaining = math.max(inner_width - title_width, 0)
+  local before = remaining > 0 and 1 or 0
+  local after = math.max(remaining - before, 0)
+
+  return chars.top_left
+    .. string.rep(chars.horizontal, before)
+    .. title
+    .. string.rep(chars.horizontal, after)
+    .. chars.top_right
+end
+
 local function divider_line(width, label)
   local chars = get_border_chars()
   local main = chars.vertical .. chars.horizontal .. ' ' .. label .. ' '
@@ -252,11 +295,17 @@ end
 --- @param show_delimiter boolean Whether to show delimiter
 --- @param frame_width number Frame width
 --- @param cell_number number Cell number for display
-function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
+--- @param at_file_top boolean Whether the window is scrolled to buffer line 1
+function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number, at_file_top)
   local chars = get_border_chars()
 
   -- Build cell label with optional name
   local cell_marker_text = build_cell_label(cell, cell_number)
+  local use_topline_fallback = show_borders
+    and cell.start_line == 0
+    and at_file_top
+    and not show_delimiter
+    and config.options.hide_delimiter
 
   -- Hide the delimiter line if configured
   if not show_delimiter and config.options.hide_delimiter then
@@ -271,12 +320,14 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       conceal = '',
     })
 
-    -- Add a subtle marker to show where the delimiter is
-    vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.delimiter, 0, {
-      virt_text = { { cell_marker_text, 'NotebookCellDelimiter' } },
-      virt_text_pos = 'overlay',
-      hl_mode = 'combine',
-    })
+    if not use_topline_fallback then
+      -- Add a subtle marker to show where the delimiter is
+      vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.delimiter, 0, {
+        virt_text = { { cell_marker_text, 'NotebookCellDelimiter' } },
+        virt_text_pos = 'overlay',
+        hl_mode = 'combine',
+      })
+    end
   end
 
   if not show_borders then
@@ -285,17 +336,27 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
 
   -- Top border - add it as a virtual line above the cell
   local top_border = make_border_line(frame_width, chars.top_left, chars.horizontal, chars.top_right)
-  -- Always anchor at the delimiter line and place above it so the border sits
-  -- directly on top of the cell even at the top of the buffer.
-  vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
-    virt_lines = {
-      { { top_border, 'NotebookCellBorder' } },
-    },
-    virt_lines_above = true,
-  })
+  if use_topline_fallback then
+    vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
+      virt_text = { { make_titled_top_border(frame_width, cell_marker_text), 'NotebookCellBorder' } },
+      virt_text_pos = 'overlay',
+      hl_mode = 'combine',
+      priority = 250,
+    })
+  else
+    -- Always anchor at the delimiter line and place above it so the border sits
+    -- directly on top of the cell even at the top of the buffer.
+    vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
+      virt_lines = {
+        { { top_border, 'NotebookCellBorder' } },
+      },
+      virt_lines_above = true,
+    })
+  end
 
   -- Side borders for each line in the cell
-  for line = cell.start_line, cell.end_line do
+  local side_start = use_topline_fallback and (cell.start_line + 1) or cell.start_line
+  for line = side_start, cell.end_line do
     -- Left border (inline at start of line, no trailing space to avoid cursor gap)
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
       virt_text = { { chars.vertical, 'NotebookCellBorder' } },
@@ -367,9 +428,11 @@ function M.render_all(bufnr, cells, mode, winid)
   -- options remain accepted for compatibility but no longer drive rendering.
   local usable_width = get_usable_width(winid)
   local standard_frame_width = usable_width
+  local wininfo = winid and vim.fn.getwininfo(winid)[1] or nil
+  local at_file_top = wininfo and wininfo.topline == 1
 
   for i, cell in ipairs(cells) do
-    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i)
+    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i, at_file_top)
   end
 end
 
