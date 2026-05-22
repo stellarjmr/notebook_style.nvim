@@ -295,24 +295,19 @@ end
 --- @param show_delimiter boolean Whether to show delimiter
 --- @param frame_width number Frame width
 --- @param cell_number number Cell number for display
---- @param at_file_top boolean Whether the window is scrolled to buffer line 1
-function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number, at_file_top)
+function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
   local chars = get_border_chars()
 
   -- Build cell label with optional name
   local cell_marker_text = build_cell_label(cell, cell_number)
-  local use_topline_fallback = show_borders
-    and cell.start_line == 0
-    and at_file_top
-    and not show_delimiter
-    and config.options.hide_delimiter
+  local use_titled_border = show_borders and not show_delimiter and config.options.hide_delimiter
 
   -- Hide the delimiter line if configured
   if not show_delimiter and config.options.hide_delimiter then
     -- Get the delimiter line content to calculate length
     local delimiter_line = vim.api.nvim_buf_get_lines(bufnr, cell.delimiter, cell.delimiter + 1, false)[1] or ''
 
-    -- Replace the entire delimiter with a subtle marker
+    -- Conceal the delimiter text so the title border can occupy the line.
     -- Use end_col as byte length for proper concealment
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.delimiter, 0, {
       end_row = cell.delimiter,
@@ -320,8 +315,8 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       conceal = '',
     })
 
-    if not use_topline_fallback then
-      -- Add a subtle marker to show where the delimiter is
+    if not use_titled_border then
+      -- If borders are hidden, still show a lightweight delimiter label.
       vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.delimiter, 0, {
         virt_text = { { cell_marker_text, 'NotebookCellDelimiter' } },
         virt_text_pos = 'overlay',
@@ -334,9 +329,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     return
   end
 
-  -- Top border - add it as a virtual line above the cell
-  local top_border = make_border_line(frame_width, chars.top_left, chars.horizontal, chars.top_right)
-  if use_topline_fallback then
+  if use_titled_border then
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
       virt_text = { { make_titled_top_border(frame_width, cell_marker_text), 'NotebookCellBorder' } },
       virt_text_pos = 'overlay',
@@ -344,6 +337,8 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       priority = 250,
     })
   else
+    -- Top border - add it as a virtual line above the cell
+    local top_border = make_border_line(frame_width, chars.top_left, chars.horizontal, chars.top_right)
     -- Always anchor at the delimiter line and place above it so the border sits
     -- directly on top of the cell even at the top of the buffer.
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.start_line, 0, {
@@ -355,7 +350,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
   end
 
   -- Side borders for each line in the cell
-  local side_start = use_topline_fallback and (cell.start_line + 1) or cell.start_line
+  local side_start = use_titled_border and (cell.start_line + 1) or cell.start_line
   for line = side_start, cell.end_line do
     -- Left border (inline at start of line, no trailing space to avoid cursor gap)
     vim.api.nvim_buf_set_extmark(bufnr, M.ns, line, 0, {
@@ -428,11 +423,9 @@ function M.render_all(bufnr, cells, mode, winid)
   -- options remain accepted for compatibility but no longer drive rendering.
   local usable_width = get_usable_width(winid)
   local standard_frame_width = usable_width
-  local wininfo = winid and vim.fn.getwininfo(winid)[1] or nil
-  local at_file_top = wininfo and wininfo.topline == 1
 
   for i, cell in ipairs(cells) do
-    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i, at_file_top)
+    M.render_cell(bufnr, cell, show_borders, show_delimiter, standard_frame_width, i)
   end
 end
 

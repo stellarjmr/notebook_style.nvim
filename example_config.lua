@@ -24,7 +24,7 @@ return {
     hide_delimiter = true,
     hide_border_in_insert = true,
 
-    -- Cell marker (requires Nerd Font)
+    -- Cell marker shown in the top border (requires Nerd Font)
     cell_marker = ' Cell',  --  is Python nerd font icon
 
     -- Cell width configuration

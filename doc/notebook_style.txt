@@ -24,7 +24,7 @@ notebook_style.nvim is a Neovim plugin that renders Python file cells
 Features:
   - Visual cell borders on all four sides
   - Cell names displayed from delimiters (e.g., # %% My Cell Name)
-  - Smart visibility (hides delimiters in normal mode, hides borders in insert)
+  - Smart visibility (hides delimiters in normal mode, shows labels in borders)
   - Fully customizable colors and border styles
   - Non-intrusive rendering using native extmarks
   - Experimental inline Python cell execution through a Rust Jupyter backend
@@ -135,7 +135,7 @@ The plugin will render borders around each cell, hiding the # %% delimiters
 in normal/visual modes and showing them in insert mode.
 
 Cell names (text after # %%) are automatically extracted and displayed in the
-cell marker (e.g., " #1 Data Loading").
+cell's top border (e.g., " #1 Data Loading").
 
 ==============================================================================
 4. COMMANDS                                         *notebook_style-commands*
@@ -235,7 +235,7 @@ Default configuration: >lua
       hide_delimiter = true,           -- Hide # %% in normal/visual modes
       hide_border_in_insert = true,    -- Hide borders in insert mode
 
-      -- Cell marker (shown when delimiter is hidden)
+      -- Cell marker (shown in the top border when delimiter is hidden)
       cell_marker = ' ',              -- Python nerd font icon
 
       -- Cell name display options
@@ -292,7 +292,7 @@ Available border styles:
                                         *notebook_style-cell-marker*
 Cell Marker~
 
-Customize the text shown when # %% delimiters are hidden: >lua
+Customize the text shown in the top border when # %% delimiters are hidden: >lua
     -- With Python nerd font icon (requires Nerd Font)
     cell_marker = ' Cell'  --  is Python icon
 
@@ -312,7 +312,8 @@ Cell Names~
 Display cell names extracted from delimiter lines. When you write: >python
     # %% My Cell Name
 <
-The plugin will display " #1 My Cell Name" instead of just " #1".
+The plugin will display " #1 My Cell Name" in the top border instead of just
+" #1".
 
 Configuration options:
   - show_cell_name: Enable/disable cell name display (default: true)

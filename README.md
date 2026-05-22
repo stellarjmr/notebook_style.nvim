@@ -8,7 +8,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 - **Visual Cell Borders**: Cells are enclosed with solid, dashed, or double borders on all sides
 - **Cell Names**: Display custom cell names from delimiters (e.g., `# %% My Cell Name`)
 - **Smart Visibility**:
-  - Hides `# %%` delimiters in normal and visual modes (shows subtle cell marker)
+  - Hides `# %%` delimiters in normal and visual modes (shows the cell label in the top border)
   - Hides cell borders in insert mode for distraction-free editing
 - **Fully Customizable**: Colors, border styles, and behavior can be configured
 - **Non-intrusive**: Borders don't obscure code and automatically adjust to window width
@@ -141,7 +141,7 @@ print(result)
 print("Unnamed cell")
 ```
 
-Cell names (text after `# %%`) are automatically extracted and displayed in the cell marker.
+Cell names (text after `# %%`) are automatically extracted and displayed in the cell's top border.
 
 ### Commands
 
@@ -214,7 +214,7 @@ require('notebook_style').setup({
   hide_border_in_insert = true,    -- Hide borders in insert mode
   manual_render = false,           -- If true, start hidden and render on demand
 
-  -- Cell marker (shown when delimiter is hidden)
+  -- Cell marker (shown in the top border when delimiter is hidden)
   cell_marker = ' ',              -- Python nerd font icon
 
   -- Cell name display options
@@ -358,7 +358,7 @@ require('notebook_style').setup({
 
 ### Cell Marker Customization
 
-Customize the text shown when `# %%` delimiters are hidden:
+Customize the text shown in the top border when `# %%` delimiters are hidden:
 
 ```lua
 require('notebook_style').setup({

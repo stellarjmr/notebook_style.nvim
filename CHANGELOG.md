@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Fixed the first cell's top border being clipped when the file is scrolled to the very top.
 
+### Changed
+- Moved hidden cell delimiter labels into each cell's top border.
+
 ## [0.5.0] - 2026-05-22
 
 ### Added
