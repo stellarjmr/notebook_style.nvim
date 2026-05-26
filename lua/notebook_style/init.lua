@@ -5,6 +5,7 @@ local cells = require('notebook_style.cells')
 local render = require('notebook_style.render')
 local exec = require('notebook_style.exec')
 local install = require('notebook_style.install')
+local output_view = require('notebook_style.output_view')
 local state = require('notebook_style.state')
 
 -- State management
@@ -182,6 +183,7 @@ function M.disable(bufnr)
   M.enabled_buffers[bufnr] = nil
   M.render_visible[bufnr] = nil
   M.pending_updates[bufnr] = nil
+  output_view.close(bufnr)
   state.clear(bufnr)
   render.clear(bufnr)
 
@@ -245,6 +247,13 @@ function M.toggle_render(bufnr)
   end
 end
 
+--- Open the current cell output in a navigable floating scratch buffer
+--- @param bufnr number Buffer number
+function M.open_output(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  return output_view.open(bufnr)
+end
+
 --- Setup the plugin
 --- @param opts table Configuration options
 function M.setup(opts)
@@ -289,6 +298,10 @@ function M.setup(opts)
     exec.run_cell(vim.api.nvim_get_current_buf())
   end, {})
 
+  vim.api.nvim_create_user_command('NotebookStyleOpenOutput', function()
+    M.open_output(vim.api.nvim_get_current_buf())
+  end, {})
+
   vim.api.nvim_create_user_command('NotebookStyleRunFile', function()
     exec.run_file(vim.api.nvim_get_current_buf())
   end, {})
@@ -326,6 +339,10 @@ function M.setup(opts)
   set_keymap('run_cell_and_move', function()
     exec.run_cell_and_move(vim.api.nvim_get_current_buf())
   end, 'Run notebook cell and move to next')
+
+  set_keymap('open_output', function()
+    M.open_output(vim.api.nvim_get_current_buf())
+  end, 'Open notebook cell output')
 end
 
 return M

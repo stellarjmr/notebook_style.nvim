@@ -37,7 +37,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.5.1',
+  version = 'v0.6.0',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -81,7 +81,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.5.1' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.6.0' },
 })
 
 require('notebook_style').setup({})
@@ -151,6 +151,7 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleRender` - Show/re-render cells for the current buffer
 - `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
 - `:NotebookStyleRunCell` - Run the current Python cell and render output inline
+- `:NotebookStyleOpenOutput` - Open the current cell output in a readonly, searchable floating buffer
 - `:NotebookStyleRunFile` - Run all Python cells in the current buffer
 - `:NotebookStyleRunCellAndMove` - Run the current cell and move to the next cell
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
@@ -175,6 +176,8 @@ cargo build --release --manifest-path core/Cargo.toml
 Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
 Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a Python Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+
+Run `:NotebookStyleOpenOutput` from a cell with captured output to open a focusable readonly floating buffer containing the full text output. This gives you normal buffer navigation (`j`/`k`), search, Visual selection, yank, and scrolling for long outputs while keeping the default inline rendering lightweight.
 
 By default, `auto_venv = true` makes kernel startup prefer a project-local `.venv`: notebook_style.nvim walks up from the current file's directory, looks for `.venv/bin/python` (or `.venv/Scripts/python.exe` on Windows), and uses it directly when it can import `ipykernel`. This avoids registering a Jupyter kernelspec for every project. If a local `.venv` exists but cannot import `ipykernel`, install it with that environment's Python (for example, `.venv/bin/python -m pip install ipykernel`) or set `auto_venv = false` to always use `kernel_name`.
 
@@ -242,6 +245,10 @@ require('notebook_style').setup({
     cols = 60,                     -- Max width reserved for image/png outputs
     cell_height_to_width = 2.0,     -- Approximate terminal cell pixel ratio
   },
+  output_view = {
+    width = 0.85,                   -- Fraction of editor columns for output viewer
+    height = 0.75,                  -- Fraction of editor rows for output viewer
+  },
 
   -- Default keymaps. Set a mapping to false to disable it.
   keymaps = {
@@ -249,6 +256,7 @@ require('notebook_style').setup({
     run_cell = '<leader>rr',
     run_file = '<leader>rf',
     run_cell_and_move = '<leader>rn',
+    open_output = '<leader>ro',
   },
 
   -- Filetypes to enable the plugin for
@@ -274,7 +282,7 @@ With manual rendering enabled:
 
 With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
-**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, and `<leader>rn` for running the current cell and moving to the next cell. You can customize or disable them:
+**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, `<leader>rn` for running the current cell and moving to the next cell, and `<leader>ro` for opening the current cell output viewer. You can customize or disable them:
 
 ```lua
 require('notebook_style').setup({
@@ -283,6 +291,11 @@ require('notebook_style').setup({
     run_cell = '<leader>rr',
     run_file = '<leader>rf',
     run_cell_and_move = false,
+    open_output = '<leader>oo',
+  },
+  output_view = {
+    width = 0.9,
+    height = 0.8,
   },
 })
 ```
