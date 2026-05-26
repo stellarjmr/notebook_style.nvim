@@ -44,8 +44,8 @@ return {
 
     -- Output viewer floating window size as a fraction of the editor.
     output_view = {
-      width = 0.85,
-      height = 0.75,
+      width = 0.5,
+      height = 0.5,
     },
 
     -- Built-in keymaps. Set any mapping to false to disable it.

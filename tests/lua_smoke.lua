@@ -57,8 +57,8 @@ test('setup registers commands and defaults', function()
 
   local config = require('notebook_style.config')
   assert_eq(config.options.auto_venv, true, 'auto_venv should default to true')
-  assert_eq(config.options.output_view.width, 0.85, 'output viewer width should default to 85%')
-  assert_eq(config.options.output_view.height, 0.75, 'output viewer height should default to 75%')
+  assert_eq(config.options.output_view.width, 0.5, 'output viewer width should default to 50%')
+  assert_eq(config.options.output_view.height, 0.5, 'output viewer height should default to 50%')
   assert_eq(vim.fn.exists(':NotebookStyleRunCell'), 2, 'run command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleOpenOutput'), 2, 'output viewer command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleDownloadBackend'), 2, 'backend installer command should exist')
@@ -219,6 +219,11 @@ test('open output creates readonly focusable floating buffer', function()
   assert_eq(vim.bo[output_buf].readonly, true, 'output viewer should be readonly')
   assert_eq(vim.bo[output_buf].modifiable, false, 'output viewer should not be modifiable')
   assert_eq(vim.wo[winid].wrap, false, 'output viewer should not wrap long lines')
+  assert_eq(
+    vim.wo[winid].winhighlight,
+    'NormalFloat:Normal,FloatBorder:Normal,FloatTitle:Normal,EndOfBuffer:Normal',
+    'output viewer should use the editor background'
+  )
   assert_eq(table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), '\n'), 'hello\nline two\n42')
 
   pcall(vim.api.nvim_win_close, winid, true)

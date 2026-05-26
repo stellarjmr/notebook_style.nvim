@@ -37,7 +37,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.6.0',
+  version = 'v0.6.1',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -81,7 +81,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.6.0' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.6.1' },
 })
 
 require('notebook_style').setup({})
@@ -246,8 +246,8 @@ require('notebook_style').setup({
     cell_height_to_width = 2.0,     -- Approximate terminal cell pixel ratio
   },
   output_view = {
-    width = 0.85,                   -- Fraction of editor columns for output viewer
-    height = 0.75,                  -- Fraction of editor rows for output viewer
+    width = 0.5,                    -- Fraction of editor columns for output viewer
+    height = 0.5,                   -- Fraction of editor rows for output viewer
   },
 
   -- Default keymaps. Set a mapping to false to disable it.

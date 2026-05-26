@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-05-26
+
+### Changed
+- Changed the default output viewer size to half of the editor (`output_view.width = 0.5`, `output_view.height = 0.5`).
+
+### Fixed
+- Made the output viewer float use the normal editor background instead of the themed gray floating-window background.
+
 ## [0.6.0] - 2026-05-26
 
 ### Added

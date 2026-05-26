@@ -76,8 +76,8 @@ M.defaults = {
     cell_height_to_width = 2.0,  -- Approximate terminal cell pixel aspect ratio
   },
   output_view = {
-    width = 0.85,  -- Fraction of editor columns used by :NotebookStyleOpenOutput
-    height = 0.75,  -- Fraction of editor rows used by :NotebookStyleOpenOutput
+    width = 0.5,  -- Fraction of editor columns used by :NotebookStyleOpenOutput
+    height = 0.5,  -- Fraction of editor rows used by :NotebookStyleOpenOutput
   },
 
   -- Default keymaps. Set a mapping to false to disable it.

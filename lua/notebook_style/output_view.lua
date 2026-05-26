@@ -171,10 +171,10 @@ local function window_options(title)
   local height_ratio = view_config.height
 
   if type(width_ratio) ~= 'number' or width_ratio <= 0 then
-    width_ratio = default_config.width or 0.85
+    width_ratio = default_config.width or 0.5
   end
   if type(height_ratio) ~= 'number' or height_ratio <= 0 then
-    height_ratio = default_config.height or 0.75
+    height_ratio = default_config.height or 0.5
   end
 
   width_ratio = math.min(width_ratio, 1)
@@ -209,6 +209,7 @@ local function set_window_options(winid)
   vim.wo[winid].relativenumber = false
   vim.wo[winid].signcolumn = 'no'
   vim.wo[winid].foldcolumn = '0'
+  vim.wo[winid].winhighlight = 'NormalFloat:Normal,FloatBorder:Normal,FloatTitle:Normal,EndOfBuffer:Normal'
 end
 
 local function output_title(cell, cell_index, execution_count)
