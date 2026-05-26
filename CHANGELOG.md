@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-05-26
+
+### Added
+- Added `:NotebookStyleOpenOutput` to open the current cell output in a focusable readonly floating buffer for navigation, search, visual selection, yank, and long-output scrolling.
+- Added configurable output viewer keymap (`keymaps.open_output`) and floating window size (`output_view.width` / `output_view.height`).
+
 ## [0.5.1] - 2026-05-22
 
 ### Fixed

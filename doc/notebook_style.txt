@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.5.1
+Version: 0.6.0
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -45,7 +45,7 @@ Using lazy.nvim: >lua
 With the optional inline execution backend installer: >lua
     {
       'stellarjmr/notebook_style.nvim',
-      version = 'v0.5.1',
+      version = 'v0.6.0',
       ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -84,7 +84,7 @@ autocommand before vim.pack.add(): >lua
     })
 
     vim.pack.add({
-      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.5.1' },
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.6.0' },
     })
 
     require('notebook_style').setup({})
@@ -189,6 +189,14 @@ cell's top border (e.g., " #1 Data Loading").
     an over-wide placeholder box. Adjust image.cell_height_to_width if your
     terminal font has an unusual cell aspect ratio.
 
+                                                 *:NotebookStyleOpenOutput*
+:NotebookStyleOpenOutput
+    Open the current cell's captured output text in a focusable readonly
+    floating scratch buffer. Use normal buffer navigation, search, Visual
+    selection, yank, and scrolling for long output. This buffer is created only
+    when the command is run; normal inline rendering remains virtual and
+    lightweight.
+
                                                     *:NotebookStyleRunFile*
 :NotebookStyleRunFile
     Run every non-empty Python cell in the current buffer.
@@ -263,6 +271,10 @@ Default configuration: >lua
         cols = 60,                     -- Max width for image/png outputs
         cell_height_to_width = 2.0,     -- Approximate terminal cell ratio
       },
+      output_view = {
+        width = 0.85,                   -- Fraction of editor columns
+        height = 0.75,                  -- Fraction of editor rows
+      },
 
       -- Default keymaps. Set a mapping to false to disable it.
       keymaps = {
@@ -270,6 +282,7 @@ Default configuration: >lua
         run_cell = '<leader>rr',
         run_file = '<leader>rf',
         run_cell_and_move = '<leader>rn',
+        open_output = '<leader>ro',
       },
 
       -- Render automatically by default. Set true to start hidden and render

@@ -42,12 +42,19 @@ return {
       cell_height_to_width = 2.0,
     },
 
+    -- Output viewer floating window size as a fraction of the editor.
+    output_view = {
+      width = 0.85,
+      height = 0.75,
+    },
+
     -- Built-in keymaps. Set any mapping to false to disable it.
     keymaps = {
       toggle_render = '<leader>rs',
       run_cell = '<leader>rr',
       run_file = '<leader>rf',
       run_cell_and_move = '<leader>rn',
+      open_output = '<leader>ro',
     },
   },
   keys = {

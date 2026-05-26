@@ -75,6 +75,10 @@ M.defaults = {
     cols = 60,  -- Maximum width reserved for image/png outputs, in terminal columns
     cell_height_to_width = 2.0,  -- Approximate terminal cell pixel aspect ratio
   },
+  output_view = {
+    width = 0.85,  -- Fraction of editor columns used by :NotebookStyleOpenOutput
+    height = 0.75,  -- Fraction of editor rows used by :NotebookStyleOpenOutput
+  },
 
   -- Default keymaps. Set a mapping to false to disable it.
   keymaps = {
@@ -82,6 +86,7 @@ M.defaults = {
     run_cell = '<leader>rr',
     run_file = '<leader>rf',
     run_cell_and_move = '<leader>rn',
+    open_output = '<leader>ro',
   },
 
   -- Filetypes to enable the plugin for
