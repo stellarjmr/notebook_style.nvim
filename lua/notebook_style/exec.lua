@@ -288,8 +288,46 @@ function M.stop_kernel(bufnr)
 
   ensure_client():call('stop_kernel', { session_id = buffer_state.session_id }, function()
     buffer_state.kernel_started = false
+    state.clear_statuses(bufnr)
     vim.notify('NotebookStyle kernel stopped', vim.log.levels.INFO)
     refresh(bufnr)
+  end)
+end
+
+function M.interrupt_kernel(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local buffer_state = state.get(bufnr)
+  if not buffer_state.session_id or not buffer_state.kernel_started then
+    vim.notify('NotebookStyle: no running kernel to interrupt', vim.log.levels.WARN)
+    return
+  end
+
+  ensure_client():call('interrupt_kernel', { session_id = buffer_state.session_id }, function(err)
+    if err then
+      vim.notify('NotebookStyle interrupt_kernel failed: ' .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    vim.notify('NotebookStyle kernel interrupted', vim.log.levels.INFO)
+  end)
+end
+
+function M.restart_kernel(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local buffer_state = state.get(bufnr)
+  if not buffer_state.session_id or not buffer_state.kernel_started then
+    M.start_kernel(bufnr)
+    return
+  end
+
+  ensure_client():call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
+    if err then
+      vim.notify('NotebookStyle restart failed to stop kernel: ' .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    buffer_state.kernel_started = false
+    state.clear_statuses(bufnr)
+    refresh(bufnr)
+    M.start_kernel(bufnr)
   end)
 end
 
@@ -367,5 +405,9 @@ function M.run_cell_and_move(bufnr)
     vim.notify('NotebookStyle: no next cell', vim.log.levels.INFO)
   end
 end
+
+-- Internal helpers shared with health.lua
+M._default_backend_cmd = default_backend_cmd
+M._find_local_venv_python = find_local_venv_python
 
 return M

@@ -213,11 +213,36 @@ cell's top border (e.g., " #1 Data Loading").
 :NotebookStyleKernelStop
     Stop the Python Jupyter kernel for the current buffer.
 
+                                               *:NotebookStyleKernelInterrupt*
+:NotebookStyleKernelInterrupt
+    Interrupt the running kernel for the current buffer, stopping a
+    long-running cell (like pressing Ctrl-C in a terminal session). Mapped to
+    <leader>ri by default.
+
+                                                 *:NotebookStyleKernelRestart*
+:NotebookStyleKernelRestart
+    Restart the kernel for the current buffer: stop it, clear busy cell
+    statuses, and start a fresh kernel using the same kernel resolution
+    (auto_venv or kernel_name). If no kernel is running, this simply starts
+    one.
+
                                              *:NotebookStyleDownloadBackend*
 :NotebookStyleDownloadBackend
     Download the prebuilt notebook-style-core backend for the current tagged
     release, or fall back to cargo build --release. Use this after install or
     update if the inline execution backend is missing.
+
+                                                       *notebook_style-health*
+:checkhealth notebook_style
+    Diagnose the plugin setup. Reports the Neovim version, whether setup() has
+    been called, backend binary presence and executability, Jupyter kernel
+    availability (project-local .venv detection for auto_venv and kernelspec
+    lookup for kernel_name), and Kitty graphics support for inline images
+    (including the tmux allow-passthrough setting when inside tmux).
+
+    While a cell is executing, the output divider below the cell shows Out[*]
+    and a "running…" line until the first output arrives. Statuses are reset
+    when the kernel is stopped or restarted.
 
 ==============================================================================
 5. CONFIGURATION                               *notebook_style-configuration*
@@ -283,6 +308,8 @@ Default configuration: >lua
         run_file = '<leader>rf',
         run_cell_and_move = '<leader>rn',
         open_output = '<leader>ro',
+        interrupt_kernel = '<leader>ri',
+        restart_kernel = false,  -- Disabled by default
       },
 
       -- Render automatically by default. Set true to start hidden and render

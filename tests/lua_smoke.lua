@@ -62,6 +62,8 @@ test('setup registers commands and defaults', function()
   assert_eq(vim.fn.exists(':NotebookStyleRunCell'), 2, 'run command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleOpenOutput'), 2, 'output viewer command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleDownloadBackend'), 2, 'backend installer command should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleKernelInterrupt'), 2, 'kernel interrupt command should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleKernelRestart'), 2, 'kernel restart command should exist')
 end)
 
 test('setup registers configurable output viewer keymap', function()
@@ -166,6 +168,65 @@ test('hidden delimiters render labels in top borders', function()
 
   notebook.disable(buf)
   vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('busy cells render an Out[*] running indicator', function()
+  local notebook = require('notebook_style')
+  local render = require('notebook_style.render')
+  local cells_mod = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local state = require('notebook_style.state')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% Busy',
+    'import time; time.sleep(60)',
+  })
+  vim.api.nvim_set_current_buf(buf)
+
+  local delimiters = cells_mod.find_delimiters(buf, config.options.cell_delimiter)
+  local cell_list = cells_mod.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  local cell_id = state.cell_id(buf, cell_list[1])
+  state.apply_event(buf, cell_id, { kind = 'execute_input', execution_count = 1 })
+
+  local function virt_lines_text()
+    local out = {}
+    local marks = vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })
+    for _, mark in ipairs(marks) do
+      for _, line in ipairs((mark[4] or {}).virt_lines or {}) do
+        for _, chunk in ipairs(line) do
+          table.insert(out, chunk[1] or '')
+        end
+      end
+    end
+    return table.concat(out, '\n')
+  end
+
+  notebook.enable(buf)
+  notebook.render(buf)
+  assert_true(vim.wait(1000, function()
+    local text = virt_lines_text()
+    return text:find('Out[*]', 1, true) ~= nil and text:find('running…', 1, true) ~= nil
+  end, 20), 'busy cell should render Out[*] divider and running indicator')
+
+  state.apply_event(buf, cell_id, { kind = 'execute_reply', status = 'ok', execution_count = 1 })
+  notebook.render(buf)
+  assert_true(vim.wait(1000, function()
+    return virt_lines_text():find('Out[*]', 1, true) == nil
+  end, 20), 'idle cell should not render the busy indicator')
+
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('checkhealth notebook_style reports all sections', function()
+  vim.cmd('checkhealth notebook_style')
+  local lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+  assert_true(lines:find('notebook_style: Neovim', 1, true) ~= nil, 'health should report Neovim section')
+  assert_true(lines:find('notebook_style: execution backend', 1, true) ~= nil, 'health should report backend section')
+  assert_true(lines:find('notebook_style: Jupyter kernel', 1, true) ~= nil, 'health should report kernel section')
+  assert_true(lines:find('notebook_style: terminal images', 1, true) ~= nil, 'health should report image section')
+  vim.cmd('bwipeout!')
 end)
 
 test('open output creates readonly focusable floating buffer', function()

@@ -318,6 +318,14 @@ function M.setup(opts)
     exec.stop_kernel(vim.api.nvim_get_current_buf())
   end, {})
 
+  vim.api.nvim_create_user_command('NotebookStyleKernelInterrupt', function()
+    exec.interrupt_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleKernelRestart', function()
+    exec.restart_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
   vim.api.nvim_create_user_command('NotebookStyleDownloadBackend', function()
     install.run()
   end, {})
@@ -343,6 +351,14 @@ function M.setup(opts)
   set_keymap('open_output', function()
     M.open_output(vim.api.nvim_get_current_buf())
   end, 'Open notebook cell output')
+
+  set_keymap('interrupt_kernel', function()
+    exec.interrupt_kernel(vim.api.nvim_get_current_buf())
+  end, 'Interrupt notebook kernel')
+
+  set_keymap('restart_kernel', function()
+    exec.restart_kernel(vim.api.nvim_get_current_buf())
+  end, 'Restart notebook kernel')
 end
 
 return M

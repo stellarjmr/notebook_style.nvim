@@ -383,11 +383,20 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
 
   local lines_below = {}
   local outputs = state.outputs(bufnr, cell)
-  if #outputs > 0 then
-    local execution_count = state.execution_count(bufnr, cell) or cell_number
-    table.insert(lines_below, { { divider_line(frame_width, 'Out[' .. execution_count .. ']'), 'NotebookCellBorder' } })
+  local busy = state.status(bufnr, cell) == 'busy'
+  if #outputs > 0 or busy then
+    local count_label
+    if busy then
+      count_label = '*'
+    else
+      count_label = state.execution_count(bufnr, cell) or cell_number
+    end
+    table.insert(lines_below, { { divider_line(frame_width, 'Out[' .. count_label .. ']'), 'NotebookCellBorder' } })
     for _, row in ipairs(build_output_lines(outputs, frame_width)) do
       table.insert(lines_below, row)
+    end
+    if busy and #outputs == 0 then
+      table.insert(lines_below, with_sides('running…', 'NotebookCellOutput', frame_width))
     end
   end
 

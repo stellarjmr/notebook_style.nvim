@@ -87,6 +87,8 @@ M.defaults = {
     run_file = '<leader>rf',
     run_cell_and_move = '<leader>rn',
     open_output = '<leader>ro',
+    interrupt_kernel = '<leader>ri',
+    restart_kernel = false,  -- Disabled by default; set e.g. '<leader>rk' to enable
   },
 
   -- Filetypes to enable the plugin for

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Added `:NotebookStyleKernelInterrupt` (default `<leader>ri`) to stop a long-running cell and `:NotebookStyleKernelRestart` to restart the kernel with a clean state.
+- Added a running indicator for executing cells: the output divider shows `Out[*]` and a `running…` line until the first output arrives.
+- Added `:checkhealth notebook_style` reporting backend binary presence, Jupyter kernel availability (`auto_venv` and `kernel_name`), and Kitty graphics / tmux passthrough support.
+
 ## [0.6.1] - 2026-05-26
 
 ### Changed

@@ -156,7 +156,10 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleRunCellAndMove` - Run the current cell and move to the next cell
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
+- `:NotebookStyleKernelInterrupt` - Interrupt the running kernel (stop a long-running cell)
+- `:NotebookStyleKernelRestart` - Restart the kernel for the current buffer
 - `:NotebookStyleDownloadBackend` - Download the prebuilt backend for this release, or fall back to building from source
+- `:checkhealth notebook_style` - Diagnose backend presence, Jupyter kernel availability, and terminal image support
 
 ### Inline Execution Backend
 
@@ -176,6 +179,10 @@ cargo build --release --manifest-path core/Cargo.toml
 Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
 Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a Python Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+
+While a cell is executing, its output divider shows `Out[*]` (with a `running…` line until the first output arrives), matching Jupyter's `In [*]` convention. Use `:NotebookStyleKernelInterrupt` (default `<leader>ri`) to stop a long-running cell, or `:NotebookStyleKernelRestart` to restart the kernel with a clean state.
+
+If execution does not work, run `:checkhealth notebook_style` to diagnose the backend binary, Jupyter kernel availability (including `auto_venv` detection), and terminal image support.
 
 Run `:NotebookStyleOpenOutput` from a cell with captured output to open a focusable readonly floating buffer containing the full text output. This gives you normal buffer navigation (`j`/`k`), search, Visual selection, yank, and scrolling for long outputs while keeping the default inline rendering lightweight.
 
@@ -257,6 +264,8 @@ require('notebook_style').setup({
     run_file = '<leader>rf',
     run_cell_and_move = '<leader>rn',
     open_output = '<leader>ro',
+    interrupt_kernel = '<leader>ri',
+    restart_kernel = false,        -- Disabled by default; set e.g. '<leader>rk' to enable
   },
 
   -- Filetypes to enable the plugin for
@@ -282,7 +291,7 @@ With manual rendering enabled:
 
 With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
-**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, `<leader>rn` for running the current cell and moving to the next cell, and `<leader>ro` for opening the current cell output viewer. You can customize or disable them:
+**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, `<leader>rn` for running the current cell and moving to the next cell, `<leader>ro` for opening the current cell output viewer, and `<leader>ri` for interrupting the kernel. A `restart_kernel` mapping is available but disabled by default. You can customize or disable them:
 
 ```lua
 require('notebook_style').setup({

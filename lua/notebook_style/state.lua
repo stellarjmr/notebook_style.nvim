@@ -51,6 +51,12 @@ function M.status(bufnr, cell)
   return state.statuses[M.cell_id(bufnr, cell)]
 end
 
+--- Reset all cell statuses, e.g. after stopping or restarting the kernel so
+--- cells killed mid-run do not stay marked as busy forever.
+function M.clear_statuses(bufnr)
+  M.get(bufnr).statuses = {}
+end
+
 function M.apply_event(bufnr, cell_id, event)
   local state = M.get(bufnr)
   local kind = event.kind
