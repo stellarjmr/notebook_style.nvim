@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-06-12
 
 ### Added
 - Added `:NotebookStyleKernelInterrupt` (default `<leader>ri`) to stop a long-running cell and `:NotebookStyleKernelRestart` to restart the kernel with a clean state.

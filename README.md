@@ -37,7 +37,7 @@ With the inline execution backend installer:
 ```lua
 {
   'stellarjmr/notebook_style.nvim',
-  version = 'v0.6.1',
+  version = 'v0.7.0',
   ft = 'python',
   build = function(plugin)
     local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -81,7 +81,7 @@ vim.api.nvim_create_autocmd('PackChanged', {
 })
 
 vim.pack.add({
-  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.6.1' },
+  { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.7.0' },
 })
 
 require('notebook_style').setup({})
