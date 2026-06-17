@@ -316,18 +316,28 @@ end
 --- @param opts table Configuration options
 function M.setup(opts)
   config.setup(opts)
-  exec.set_refresh(function(bufnr)
-    if config.options.manual_render then
+  exec.set_refresh(function(bufnr, refresh_opts)
+    if config.options.manual_render and not (refresh_opts and refresh_opts.preserve_visibility) then
       M.render_visible[bufnr] = true
     end
     request_update(bufnr, vim.fn.bufwinid(bufnr))
   end)
 
+  local setup_group = vim.api.nvim_create_augroup('NotebookStyle', { clear = true })
+
   -- Auto-enable for configured filetypes
   vim.api.nvim_create_autocmd('FileType', {
+    group = setup_group,
     pattern = config.options.filetypes,
     callback = function(args)
       M.enable(args.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd('ColorScheme', {
+    group = setup_group,
+    callback = function()
+      config.apply_highlights()
     end,
   })
 
@@ -360,6 +370,18 @@ function M.setup(opts)
     M.open_output(vim.api.nvim_get_current_buf())
   end, {})
 
+  vim.api.nvim_create_user_command('NotebookStyleClearOutput', function()
+    exec.clear_cell_output(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleClearCellOutput', function()
+    exec.clear_cell_output(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleClearAllOutputs', function()
+    exec.clear_outputs(vim.api.nvim_get_current_buf())
+  end, {})
+
   vim.api.nvim_create_user_command('NotebookStyleRunFile', function()
     exec.run_file(vim.api.nvim_get_current_buf())
   end, {})
@@ -382,6 +404,10 @@ function M.setup(opts)
 
   vim.api.nvim_create_user_command('NotebookStyleKernelRestart', function()
     exec.restart_kernel(vim.api.nvim_get_current_buf())
+  end, {})
+
+  vim.api.nvim_create_user_command('NotebookStyleSelectKernel', function()
+    exec.select_kernel(vim.api.nvim_get_current_buf())
   end, {})
 
   vim.api.nvim_create_user_command('NotebookStyleDownloadBackend', function()

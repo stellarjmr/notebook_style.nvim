@@ -1,6 +1,7 @@
 local cells = require('notebook_style.cells')
 local config = require('notebook_style.config')
 local image = require('notebook_style.image')
+local output_view = require('notebook_style.output_view')
 local rpc = require('notebook_style.rpc')
 local state = require('notebook_style.state')
 
@@ -212,6 +213,96 @@ local function execute_cell(bufnr, cell, callback)
   end)
 end
 
+local function clear_output_images(outputs)
+  for _, output in ipairs(outputs or {}) do
+    image.clear(output, client)
+  end
+end
+
+local function clear_output_map_images(outputs_by_cell)
+  for _, outputs in pairs(outputs_by_cell or {}) do
+    clear_output_images(outputs)
+  end
+end
+
+local function sync_clear_with_backend(method, params)
+  if not client or not client.job then
+    return
+  end
+
+  client:call(method, params, function(err)
+    if err then
+      vim.notify('NotebookStyle ' .. method .. ' failed: ' .. tostring(err), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+local function kernel_label(spec)
+  local label = spec.display_name or spec.name or 'unknown kernel'
+  if spec.name and spec.name ~= label then
+    label = label .. ' (' .. spec.name .. ')'
+  end
+  if spec.language and spec.language ~= '' then
+    label = label .. ' [' .. spec.language .. ']'
+  end
+  return label
+end
+
+function M.list_kernels(callback)
+  ensure_client():call('list_kernels', {}, function(err, result)
+    if err then
+      vim.notify('NotebookStyle list_kernels failed: ' .. tostring(err), vim.log.levels.ERROR)
+      if callback then callback(err) end
+      return
+    end
+
+    if callback then
+      callback(nil, result or {})
+    end
+  end)
+end
+
+function M.select_kernel(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
+  M.list_kernels(function(err, kernels)
+    if err then
+      return
+    end
+    if not vim.api.nvim_buf_is_valid(bufnr) then
+      return
+    end
+    if type(kernels) ~= 'table' or #kernels == 0 then
+      vim.notify('NotebookStyle: no Jupyter kernels found', vim.log.levels.WARN)
+      return
+    end
+
+    vim.ui.select(kernels, {
+      prompt = 'Select NotebookStyle kernel:',
+      format_item = kernel_label,
+    }, function(choice)
+      if not choice then
+        return
+      end
+      if not choice.name or choice.name == '' then
+        vim.notify('NotebookStyle: selected kernel has no name', vim.log.levels.ERROR)
+        return
+      end
+
+      state.set_kernel_name(bufnr, choice.name)
+      vim.notify('NotebookStyle kernel selected: ' .. kernel_label(choice), vim.log.levels.INFO)
+
+      local buffer_state = state.get(bufnr)
+      if buffer_state.kernel_started then
+        M.restart_kernel(bufnr)
+      end
+    end)
+  end)
+end
+
 function M.start_kernel(bufnr, callback)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local buffer_state = state.get(bufnr)
@@ -227,7 +318,8 @@ function M.start_kernel(bufnr, callback)
   local cwd = path ~= '' and vim.fn.fnamemodify(path, ':p:h') or vim.loop.cwd()
   local cl = ensure_client()
   local python_path, auto_venv_warning
-  if config.options.auto_venv ~= false then
+  local kernel_name = state.kernel_name(bufnr) or config.options.kernel_name
+  if not state.kernel_name(bufnr) and config.options.auto_venv ~= false then
     python_path, auto_venv_warning = find_local_venv_python(cwd)
     if auto_venv_warning then
       vim.notify('NotebookStyle auto_venv skipped: ' .. auto_venv_warning, vim.log.levels.WARN)
@@ -237,7 +329,7 @@ function M.start_kernel(bufnr, callback)
   local function start_session(session_id)
     cl:call('start_kernel', {
       session_id = session_id,
-      kernel_name = config.options.kernel_name,
+      kernel_name = kernel_name,
       python_path = python_path,
       cwd = cwd,
     }, function(start_err, start_result)
@@ -247,8 +339,8 @@ function M.start_kernel(bufnr, callback)
       end
 
       buffer_state.kernel_started = true
-      local kernel_name = start_result and start_result.kernel_name or config.options.kernel_name
-      vim.notify("NotebookStyle kernel '" .. tostring(kernel_name) .. "' started", vim.log.levels.INFO)
+      local started_kernel_name = start_result and start_result.kernel_name or kernel_name
+      vim.notify("NotebookStyle kernel '" .. tostring(started_kernel_name) .. "' started", vim.log.levels.INFO)
 
       cl:call('execute_silent', {
         session_id = session_id,
@@ -277,6 +369,45 @@ function M.start_kernel(bufnr, callback)
 
     start_session(result.session_id)
   end)
+end
+
+function M.clear_cell_output(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local cell = current_cell(bufnr)
+  if not cell then
+    vim.notify('NotebookStyle: cursor is not inside a cell', vim.log.levels.WARN)
+    return
+  end
+
+  local buffer_state = state.get(bufnr)
+  local outputs, cell_id = state.clear_cell_output(bufnr, cell)
+  clear_output_images(outputs)
+  output_view.close(bufnr)
+
+  if buffer_state.session_id then
+    sync_clear_with_backend('clear_cell_output', {
+      session_id = buffer_state.session_id,
+      cell_id = cell_id,
+    })
+  end
+
+  refresh(bufnr, { preserve_visibility = true })
+end
+
+function M.clear_outputs(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local buffer_state = state.get(bufnr)
+  local outputs_by_cell = state.clear_outputs(bufnr)
+  clear_output_map_images(outputs_by_cell)
+  output_view.close(bufnr)
+
+  if buffer_state.session_id then
+    sync_clear_with_backend('clear_outputs', {
+      session_id = buffer_state.session_id,
+    })
+  end
+
+  refresh(bufnr, { preserve_visibility = true })
 end
 
 function M.stop_kernel(bufnr)

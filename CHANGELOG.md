@@ -4,8 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Added `:NotebookStyleSelectKernel` to choose an installed Jupyter kernelspec for the current buffer.
+- Added `:NotebookStyleClearOutput` / `:NotebookStyleClearCellOutput` and `:NotebookStyleClearAllOutputs` to clear current-cell or buffer-wide inline outputs.
+
 ### Changed
 - Changed default keymaps to buffer-local mappings installed only for enabled buffers, avoiding collisions in other filetypes.
+- Reapply configured highlight groups after `ColorScheme` changes.
 
 ## [0.7.0] - 2026-06-12
 

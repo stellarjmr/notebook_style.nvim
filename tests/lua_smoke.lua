@@ -68,6 +68,14 @@ local function has_global_keymap(lhs)
   return has_keymap(vim.api.nvim_get_keymap('n'), lhs)
 end
 
+local function highlight_fg(name)
+  local hl = vim.api.nvim_get_hl(0, { name = name, link = false })
+  if not hl.fg then
+    return ''
+  end
+  return string.format('#%06x', hl.fg)
+end
+
 test('setup registers commands and defaults', function()
   local notebook = require('notebook_style')
   notebook.setup({ keymaps = false })
@@ -81,6 +89,66 @@ test('setup registers commands and defaults', function()
   assert_eq(vim.fn.exists(':NotebookStyleDownloadBackend'), 2, 'backend installer command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleKernelInterrupt'), 2, 'kernel interrupt command should exist')
   assert_eq(vim.fn.exists(':NotebookStyleKernelRestart'), 2, 'kernel restart command should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleSelectKernel'), 2, 'kernel selector command should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleClearOutput'), 2, 'clear current output command should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleClearCellOutput'), 2, 'clear current cell output alias should exist')
+  assert_eq(vim.fn.exists(':NotebookStyleClearAllOutputs'), 2, 'clear all outputs command should exist')
+end)
+
+test('colorscheme reapplies configured highlights', function()
+  local notebook = require('notebook_style')
+  notebook.setup({
+    keymaps = false,
+    colors = {
+      border = '#123456',
+      delimiter = '#abcdef',
+      output = '#111111',
+      result = '#222222',
+      error = '#333333',
+    },
+  })
+
+  vim.api.nvim_set_hl(0, 'NotebookCellBorder', { fg = '#000000' })
+  vim.api.nvim_set_hl(0, 'NotebookCellOutput', { fg = '#000000' })
+  vim.cmd('doautocmd ColorScheme')
+
+  assert_eq(highlight_fg('NotebookCellBorder'), '#123456', 'border highlight should be restored')
+  assert_eq(highlight_fg('NotebookCellOutput'), '#111111', 'output highlight should be restored')
+end)
+
+test('select kernel stores a buffer-local kernel override', function()
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local buf = vim.api.nvim_create_buf(false, true)
+  local old_select = vim.ui.select
+  local old_list_kernels = exec.list_kernels
+
+  local ok, err = pcall(function()
+    exec.list_kernels = function(callback)
+      callback(nil, {
+        { name = 'python3', display_name = 'Python 3', language = 'python' },
+        { name = 'analysis', display_name = 'Analysis Env', language = 'python' },
+      })
+    end
+
+    vim.ui.select = function(items, opts, callback)
+      assert_eq(#items, 2, 'kernel selector should receive discovered kernels')
+      assert_eq(opts.format_item(items[1]), 'Python 3 (python3) [python]', 'kernel label should include display, name, and language')
+      callback(items[2])
+    end
+
+    exec.select_kernel(buf)
+    assert_eq(state.kernel_name(buf), 'analysis', 'selected kernel should be stored for the buffer')
+  end)
+
+  vim.ui.select = old_select
+  exec.list_kernels = old_list_kernels
+  state.clear(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+
+  if not ok then
+    error(err, 0)
+  end
 end)
 
 test('keymaps=false skips buffer-local keymaps', function()
@@ -257,6 +325,83 @@ test('busy cells render an Out[*] running indicator', function()
   assert_true(vim.wait(1000, function()
     return virt_lines_text():find('Out[*]', 1, true) == nil
   end, 20), 'idle cell should not render the busy indicator')
+
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('clear output commands remove state, rendering, and output view', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local render = require('notebook_style.render')
+  local cells_mod = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local state = require('notebook_style.state')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  notebook.setup({ keymaps = false })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% Alpha',
+    'print("first")',
+    '# %% Beta',
+    'print("second")',
+  })
+  vim.api.nvim_set_current_buf(buf)
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+  local delimiters = cells_mod.find_delimiters(buf, config.options.cell_delimiter)
+  local cell_list = cells_mod.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  local first_id = state.cell_id(buf, cell_list[1])
+  local second_id = state.cell_id(buf, cell_list[2])
+  state.apply_event(buf, first_id, { kind = 'execute_input', execution_count = 1 })
+  state.apply_event(buf, first_id, { kind = 'stream', name = 'stdout', text = 'first output' })
+  state.apply_event(buf, second_id, { kind = 'execute_input', execution_count = 2 })
+  state.apply_event(buf, second_id, { kind = 'stream', name = 'stdout', text = 'second output' })
+
+  local function virt_lines_text()
+    local out = {}
+    local marks = vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })
+    for _, mark in ipairs(marks) do
+      for _, line in ipairs((mark[4] or {}).virt_lines or {}) do
+        for _, chunk in ipairs(line) do
+          table.insert(out, chunk[1] or '')
+        end
+      end
+    end
+    return table.concat(out, '\n')
+  end
+
+  notebook.enable(buf)
+  notebook.render(buf)
+  assert_true(vim.wait(1000, function()
+    local text = virt_lines_text()
+    return text:find('first output', 1, true) ~= nil and text:find('second output', 1, true) ~= nil
+  end, 20), 'both outputs should render before clearing')
+
+  local winid, output_buf = notebook.open_output(buf)
+  assert_true(winid and vim.api.nvim_win_is_valid(winid), 'output viewer should open before clearing')
+  assert_true(output_buf and vim.api.nvim_buf_is_valid(output_buf), 'output viewer buffer should exist before clearing')
+
+  vim.api.nvim_set_current_win(vim.fn.bufwinid(buf))
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  exec.clear_cell_output(buf)
+
+  assert_eq(#state.outputs(buf, cell_list[1]), 0, 'current cell output state should be cleared')
+  assert_eq(#state.outputs(buf, cell_list[2]), 1, 'other cell output state should remain')
+  assert_true(vim.wait(1000, function()
+    return not vim.api.nvim_win_is_valid(winid) and not vim.api.nvim_buf_is_valid(output_buf)
+  end, 20), 'output viewer should close when current output is cleared')
+  assert_true(vim.wait(1000, function()
+    local text = virt_lines_text()
+    return text:find('first output', 1, true) == nil and text:find('second output', 1, true) ~= nil
+  end, 20), 'rendered current output should be removed')
+
+  exec.clear_outputs(buf)
+  assert_eq(#state.outputs(buf, cell_list[1]), 0, 'first cell should remain clear')
+  assert_eq(#state.outputs(buf, cell_list[2]), 0, 'all output state should be cleared')
+  assert_true(vim.wait(1000, function()
+    return virt_lines_text():find('second output', 1, true) == nil
+  end, 20), 'all rendered output should be removed')
 
   notebook.disable(buf)
   vim.api.nvim_buf_delete(buf, { force = true })

@@ -197,6 +197,18 @@ cell's top border (e.g., " #1 Data Loading").
     when the command is run; normal inline rendering remains virtual and
     lightweight.
 
+                                                *:NotebookStyleClearOutput*
+                                            *:NotebookStyleClearCellOutput*
+:NotebookStyleClearOutput
+:NotebookStyleClearCellOutput
+    Clear the current cell's captured inline output and close any open output
+    viewer for the current buffer.
+
+                                            *:NotebookStyleClearAllOutputs*
+:NotebookStyleClearAllOutputs
+    Clear captured inline output for every cell in the current buffer and
+    close any open output viewer for that buffer.
+
                                                     *:NotebookStyleRunFile*
 :NotebookStyleRunFile
     Run every non-empty Python cell in the current buffer.
@@ -225,6 +237,12 @@ cell's top border (e.g., " #1 Data Loading").
     statuses, and start a fresh kernel using the same kernel resolution
     (auto_venv or kernel_name). If no kernel is running, this simply starts
     one.
+
+                                                 *:NotebookStyleSelectKernel*
+:NotebookStyleSelectKernel
+    Select an installed Jupyter kernelspec for the current buffer using
+    vim.ui.select(). A selected kernel overrides auto_venv for that buffer; if
+    a kernel is already running, it is restarted with the selected kernelspec.
 
                                              *:NotebookStyleDownloadBackend*
 :NotebookStyleDownloadBackend
@@ -428,6 +446,10 @@ Or link to existing groups: >lua
     vim.api.nvim_set_hl(0, 'NotebookCellBorder', { link = 'Comment' })
     vim.api.nvim_set_hl(0, 'NotebookCellDelimiter', { link = 'Special' })
 <
+
+Configured highlight colors are reapplied after ColorScheme changes. If you
+prefer manual links like the example above, define your own ColorScheme
+autocmd after setup() to reapply those overrides.
 
 ==============================================================================
 vim:tw=78:ts=8:ft=help:norl:

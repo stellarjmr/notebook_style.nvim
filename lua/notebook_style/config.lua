@@ -101,9 +101,7 @@ M.defaults = {
 
 M.options = {}
 
-function M.setup(opts)
-  M.options = vim.tbl_deep_extend('force', M.defaults, opts or {})
-
+function M.apply_highlights()
   -- Set up highlight groups
   vim.api.nvim_set_hl(0, 'NotebookCellBorder', {
     fg = M.options.colors.border,
@@ -124,6 +122,11 @@ function M.setup(opts)
   vim.api.nvim_set_hl(0, 'NotebookCellError', {
     fg = M.options.colors.error or '#F7768E',
   })
+end
+
+function M.setup(opts)
+  M.options = vim.tbl_deep_extend('force', M.defaults, opts or {})
+  M.apply_highlights()
 end
 
 return M

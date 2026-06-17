@@ -152,12 +152,15 @@ Cell names (text after `# %%`) are automatically extracted and displayed in the 
 - `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
 - `:NotebookStyleRunCell` - Run the current Python cell and render output inline
 - `:NotebookStyleOpenOutput` - Open the current cell output in a readonly, searchable floating buffer
+- `:NotebookStyleClearOutput` / `:NotebookStyleClearCellOutput` - Clear the current cell's inline output
+- `:NotebookStyleClearAllOutputs` - Clear all inline outputs in the current buffer
 - `:NotebookStyleRunFile` - Run all Python cells in the current buffer
 - `:NotebookStyleRunCellAndMove` - Run the current cell and move to the next cell
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelInterrupt` - Interrupt the running kernel (stop a long-running cell)
 - `:NotebookStyleKernelRestart` - Restart the kernel for the current buffer
+- `:NotebookStyleSelectKernel` - Select a Jupyter kernelspec for the current buffer
 - `:NotebookStyleDownloadBackend` - Download the prebuilt backend for this release, or fall back to building from source
 - `:checkhealth notebook_style` - Diagnose backend presence, Jupyter kernel availability, and terminal image support
 
@@ -186,7 +189,11 @@ If execution does not work, run `:checkhealth notebook_style` to diagnose the ba
 
 Run `:NotebookStyleOpenOutput` from a cell with captured output to open a focusable readonly floating buffer containing the full text output. This gives you normal buffer navigation (`j`/`k`), search, Visual selection, yank, and scrolling for long outputs while keeping the default inline rendering lightweight.
 
+Use `:NotebookStyleClearOutput` (alias `:NotebookStyleClearCellOutput`) to clear the current cell's captured output, or `:NotebookStyleClearAllOutputs` to clear every inline output in the current buffer. Clearing also closes any open output viewer for that buffer.
+
 By default, `auto_venv = true` makes kernel startup prefer a project-local `.venv`: notebook_style.nvim walks up from the current file's directory, looks for `.venv/bin/python` (or `.venv/Scripts/python.exe` on Windows), and uses it directly when it can import `ipykernel`. This avoids registering a Jupyter kernelspec for every project. If a local `.venv` exists but cannot import `ipykernel`, install it with that environment's Python (for example, `.venv/bin/python -m pip install ipykernel`) or set `auto_venv = false` to always use `kernel_name`.
+
+Run `:NotebookStyleSelectKernel` to choose from installed Jupyter kernelspecs for the current buffer. A selected kernel overrides `auto_venv` for that buffer; if a kernel is already running, it is restarted with the selected kernelspec.
 
 When running inside tmux, enable graphics passthrough in tmux:
 
@@ -353,6 +360,8 @@ require('notebook_style').setup({
 })
 ```
 
+Configured highlight colors are reapplied automatically after `:colorscheme` changes.
+
 Or link to your colorscheme:
 
 ```lua
@@ -360,6 +369,8 @@ Or link to your colorscheme:
 vim.api.nvim_set_hl(0, 'NotebookCellBorder', { link = 'Comment' })
 vim.api.nvim_set_hl(0, 'NotebookCellDelimiter', { link = 'Special' })
 ```
+
+If you use manual links and switch themes at runtime, define your own `ColorScheme` autocmd after setup to reapply those overrides.
 
 ### Cell Width Configuration
 

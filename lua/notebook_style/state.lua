@@ -6,6 +6,7 @@ local function default_buffer_state()
   return {
     session_id = nil,
     kernel_started = false,
+    selected_kernel_name = nil,
     cells = {},
     outputs = {},
     execution_counts = {},
@@ -55,6 +56,33 @@ end
 --- cells killed mid-run do not stay marked as busy forever.
 function M.clear_statuses(bufnr)
   M.get(bufnr).statuses = {}
+end
+
+function M.set_kernel_name(bufnr, kernel_name)
+  M.get(bufnr).selected_kernel_name = kernel_name
+end
+
+function M.kernel_name(bufnr)
+  return M.get(bufnr).selected_kernel_name
+end
+
+function M.clear_cell_output(bufnr, cell)
+  local state = M.get(bufnr)
+  local cell_id = M.cell_id(bufnr, cell)
+  local outputs = state.outputs[cell_id] or {}
+  state.outputs[cell_id] = {}
+  state.execution_counts[cell_id] = nil
+  state.statuses[cell_id] = nil
+  return outputs, cell_id
+end
+
+function M.clear_outputs(bufnr)
+  local state = M.get(bufnr)
+  local outputs = state.outputs
+  state.outputs = {}
+  state.execution_counts = {}
+  state.statuses = {}
+  return outputs
 end
 
 function M.apply_event(bufnr, cell_id, event)
