@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+- Changed default keymaps to buffer-local mappings installed only for enabled buffers, avoiding collisions in other filetypes.
+
 ## [0.7.0] - 2026-06-12
 
 ### Added

@@ -80,7 +80,7 @@ M.defaults = {
     height = 0.5,  -- Fraction of editor rows used by :NotebookStyleOpenOutput
   },
 
-  -- Default keymaps. Set a mapping to false to disable it.
+  -- Default buffer-local keymaps. Set a mapping to false to disable it.
   keymaps = {
     toggle_render = '<leader>rs',
     run_cell = '<leader>rr',

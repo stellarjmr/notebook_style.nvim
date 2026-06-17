@@ -216,8 +216,8 @@ cell's top border (e.g., " #1 Data Loading").
                                                *:NotebookStyleKernelInterrupt*
 :NotebookStyleKernelInterrupt
     Interrupt the running kernel for the current buffer, stopping a
-    long-running cell (like pressing Ctrl-C in a terminal session). Mapped to
-    <leader>ri by default.
+    long-running cell (like pressing Ctrl-C in a terminal session).
+    Buffer-locally mapped to <leader>ri by default.
 
                                                  *:NotebookStyleKernelRestart*
 :NotebookStyleKernelRestart
@@ -301,7 +301,7 @@ Default configuration: >lua
         height = 0.5,                   -- Fraction of editor rows
       },
 
-      -- Default keymaps. Set a mapping to false to disable it.
+      -- Default buffer-local keymaps. Set a mapping to false to disable it.
       keymaps = {
         toggle_render = '<leader>rs',
         run_cell = '<leader>rr',

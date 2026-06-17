@@ -51,6 +51,23 @@ local function python_imports_ipykernel(python)
   return vim.v.shell_error == 0
 end
 
+local function has_keymap(maps, lhs)
+  for _, map in ipairs(maps) do
+    if map.lhs == lhs then
+      return true
+    end
+  end
+  return false
+end
+
+local function has_buffer_keymap(bufnr, lhs)
+  return has_keymap(vim.api.nvim_buf_get_keymap(bufnr, 'n'), lhs)
+end
+
+local function has_global_keymap(lhs)
+  return has_keymap(vim.api.nvim_get_keymap('n'), lhs)
+end
+
 test('setup registers commands and defaults', function()
   local notebook = require('notebook_style')
   notebook.setup({ keymaps = false })
@@ -66,8 +83,26 @@ test('setup registers commands and defaults', function()
   assert_eq(vim.fn.exists(':NotebookStyleKernelRestart'), 2, 'kernel restart command should exist')
 end)
 
-test('setup registers configurable output viewer keymap', function()
+test('keymaps=false skips buffer-local keymaps', function()
   local notebook = require('notebook_style')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  notebook.setup({ keymaps = false })
+  vim.api.nvim_set_current_buf(buf)
+  notebook.enable(buf)
+
+  assert_true(not has_buffer_keymap(buf, '<leader>rs'), 'toggle keymap should not be registered')
+  assert_true(not has_global_keymap('<leader>rs'), 'toggle keymap should not be global')
+
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('setup registers configurable output viewer keymap as buffer-local', function()
+  local notebook = require('notebook_style')
+  local buf = vim.api.nvim_create_buf(false, true)
+  local other = vim.api.nvim_create_buf(false, true)
+
   notebook.setup({
     keymaps = {
       toggle_render = false,
@@ -77,10 +112,18 @@ test('setup registers configurable output viewer keymap', function()
       open_output = '<F12>',
     },
   })
+  vim.api.nvim_set_current_buf(buf)
+  notebook.enable(buf)
 
-  assert_true(vim.fn.maparg('<F12>', 'n') ~= '', 'open output keymap should be registered')
+  assert_true(has_buffer_keymap(buf, '<F12>'), 'open output keymap should be registered for enabled buffer')
+  assert_true(not has_buffer_keymap(other, '<F12>'), 'open output keymap should not leak to other buffers')
+  assert_true(not has_global_keymap('<F12>'), 'open output keymap should not be global')
 
-  pcall(vim.keymap.del, 'n', '<F12>')
+  notebook.disable(buf)
+  assert_true(not has_buffer_keymap(buf, '<F12>'), 'open output keymap should be cleared when disabled')
+
+  vim.api.nvim_buf_delete(buf, { force = true })
+  vim.api.nvim_buf_delete(other, { force = true })
 end)
 
 test('default delimiter ignores IPython magic comments', function()

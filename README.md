@@ -257,7 +257,7 @@ require('notebook_style').setup({
     height = 0.5,                   -- Fraction of editor rows for output viewer
   },
 
-  -- Default keymaps. Set a mapping to false to disable it.
+  -- Default buffer-local keymaps. Set a mapping to false to disable it.
   keymaps = {
     toggle_render = '<leader>rs',
     run_cell = '<leader>rr',
@@ -291,7 +291,7 @@ With manual rendering enabled:
 
 With the default `manual_render = false`, cells render automatically when a Python buffer opens. In this mode, `<leader>rs` hides the current rendering and keeps it hidden until you toggle it back on or run `:NotebookStyleRender`.
 
-**Keybindings**: The plugin automatically sets up `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, `<leader>rn` for running the current cell and moving to the next cell, `<leader>ro` for opening the current cell output viewer, and `<leader>ri` for interrupting the kernel. A `restart_kernel` mapping is available but disabled by default. You can customize or disable them:
+**Keybindings**: The plugin automatically sets up buffer-local mappings in enabled buffers (Python by default): `<leader>rs` for toggling, `<leader>rr` for running the current cell, `<leader>rf` for running all cells, `<leader>rn` for running the current cell and moving to the next cell, `<leader>ro` for opening the current cell output viewer, and `<leader>ri` for interrupting the kernel. A `restart_kernel` mapping is available but disabled by default. You can customize or disable them:
 
 ```lua
 require('notebook_style').setup({

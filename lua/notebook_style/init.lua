@@ -12,16 +12,39 @@ local state = require('notebook_style.state')
 M.enabled_buffers = {}
 M.render_visible = {}  -- Track if rendering is currently visible per buffer
 M.pending_updates = {}
-M.active_keymaps = {}
+M.active_keymaps = {}  -- Track buffer-local keymaps per buffer
 
-local function clear_keymaps()
-  for _, lhs in pairs(M.active_keymaps) do
-    pcall(vim.keymap.del, 'n', lhs)
+local function clear_keymaps(bufnr)
+  local function clear_buffer_keymaps(target_bufnr)
+    local keymaps = M.active_keymaps[target_bufnr]
+    if not keymaps then
+      return
+    end
+
+    if vim.api.nvim_buf_is_valid(target_bufnr) then
+      for _, lhs in pairs(keymaps) do
+        pcall(vim.keymap.del, 'n', lhs, { buffer = target_bufnr })
+      end
+    end
+
+    M.active_keymaps[target_bufnr] = nil
   end
-  M.active_keymaps = {}
+
+  if bufnr then
+    clear_buffer_keymaps(bufnr)
+    return
+  end
+
+  for active_bufnr, _ in pairs(M.active_keymaps) do
+    clear_buffer_keymaps(active_bufnr)
+  end
 end
 
-local function set_keymap(name, rhs, desc)
+local function set_keymap(bufnr, name, rhs, desc)
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    return
+  end
+
   local keymaps = config.options.keymaps
   if keymaps == false then
     return
@@ -32,8 +55,41 @@ local function set_keymap(name, rhs, desc)
     return
   end
 
-  vim.keymap.set('n', lhs, rhs, { desc = desc, silent = true })
-  M.active_keymaps[name] = lhs
+  vim.keymap.set('n', lhs, rhs, { buffer = bufnr, desc = desc, silent = true })
+  M.active_keymaps[bufnr] = M.active_keymaps[bufnr] or {}
+  M.active_keymaps[bufnr][name] = lhs
+end
+
+local function set_keymaps(bufnr)
+  clear_keymaps(bufnr)
+
+  set_keymap(bufnr, 'toggle_render', function()
+    M.toggle_render(bufnr)
+  end, 'Toggle notebook cell rendering')
+
+  set_keymap(bufnr, 'run_cell', function()
+    exec.run_cell(bufnr)
+  end, 'Run notebook cell')
+
+  set_keymap(bufnr, 'run_file', function()
+    exec.run_file(bufnr)
+  end, 'Run notebook file')
+
+  set_keymap(bufnr, 'run_cell_and_move', function()
+    exec.run_cell_and_move(bufnr)
+  end, 'Run notebook cell and move to next')
+
+  set_keymap(bufnr, 'open_output', function()
+    M.open_output(bufnr)
+  end, 'Open notebook cell output')
+
+  set_keymap(bufnr, 'interrupt_kernel', function()
+    exec.interrupt_kernel(bufnr)
+  end, 'Interrupt notebook kernel')
+
+  set_keymap(bufnr, 'restart_kernel', function()
+    exec.restart_kernel(bufnr)
+  end, 'Restart notebook kernel')
 end
 
 --- Resolve a usable window for a buffer
@@ -113,6 +169,7 @@ function M.enable(bufnr)
 
   M.enabled_buffers[bufnr] = true
   M.render_visible[bufnr] = not config.options.manual_render
+  set_keymaps(bufnr)
 
   -- Set up autocommands for this buffer
   local group = vim.api.nvim_create_augroup('NotebookStyle_' .. bufnr, { clear = true })
@@ -183,6 +240,7 @@ function M.disable(bufnr)
   M.enabled_buffers[bufnr] = nil
   M.render_visible[bufnr] = nil
   M.pending_updates[bufnr] = nil
+  clear_keymaps(bufnr)
   output_view.close(bufnr)
   state.clear(bufnr)
   render.clear(bufnr)
@@ -331,34 +389,16 @@ function M.setup(opts)
   end, {})
 
   clear_keymaps()
-
-  set_keymap('toggle_render', function()
-    M.toggle_render()
-  end, 'Toggle notebook cell rendering')
-
-  set_keymap('run_cell', function()
-    exec.run_cell(vim.api.nvim_get_current_buf())
-  end, 'Run notebook cell')
-
-  set_keymap('run_file', function()
-    exec.run_file(vim.api.nvim_get_current_buf())
-  end, 'Run notebook file')
-
-  set_keymap('run_cell_and_move', function()
-    exec.run_cell_and_move(vim.api.nvim_get_current_buf())
-  end, 'Run notebook cell and move to next')
-
-  set_keymap('open_output', function()
-    M.open_output(vim.api.nvim_get_current_buf())
-  end, 'Open notebook cell output')
-
-  set_keymap('interrupt_kernel', function()
-    exec.interrupt_kernel(vim.api.nvim_get_current_buf())
-  end, 'Interrupt notebook kernel')
-
-  set_keymap('restart_kernel', function()
-    exec.restart_kernel(vim.api.nvim_get_current_buf())
-  end, 'Restart notebook kernel')
+  for bufnr, enabled in pairs(M.enabled_buffers) do
+    if enabled and vim.api.nvim_buf_is_valid(bufnr) then
+      set_keymaps(bufnr)
+    else
+      M.enabled_buffers[bufnr] = nil
+      M.render_visible[bufnr] = nil
+      M.pending_updates[bufnr] = nil
+      M.active_keymaps[bufnr] = nil
+    end
+  end
 end
 
 return M
