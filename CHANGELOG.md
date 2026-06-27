@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.8.1] - 2026-06-27
 
 ### Fixed
 - Fixed a crash (`attempt to index local 'chars' (a nil value)`) when `border_style` referenced a custom style. Custom styles now resolve from either `border_chars` or a top-level config key, missing border characters fall back to the `solid` defaults, and an unknown `border_style` warns and falls back to `solid` instead of erroring.
