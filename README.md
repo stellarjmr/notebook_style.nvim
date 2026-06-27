@@ -347,6 +347,11 @@ require('notebook_style').setup({
 })
 ```
 
+Any characters you omit from a custom style (for example `horizontal` or
+`vertical`) fall back to the `solid` defaults, so a partial style still renders
+without errors. If `border_style` names a style that does not exist, the plugin
+warns and falls back to `solid`.
+
 ### Color Customization
 
 You can use hex colors or link to existing highlight groups:

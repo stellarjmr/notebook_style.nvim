@@ -16,7 +16,39 @@ end
 --- @return table Border characters
 local function get_border_chars()
   local style = config.options.border_style or 'solid'
-  return config.options.border_chars[style]
+  local border_chars = config.options.border_chars or {}
+
+  -- Default characters to fall back on for any keys a custom style omits
+  -- (e.g. a style that only defines corners but not horizontal/vertical).
+  local defaults = border_chars.solid or {
+    top_left = '┌',
+    top_right = '┐',
+    bottom_left = '└',
+    bottom_right = '┘',
+    horizontal = '─',
+    vertical = '│',
+  }
+
+  -- Resolve the style table. Prefer border_chars[style]; also accept a custom
+  -- style defined at the top level of the config (e.g. `my_style = {...}`).
+  local chars = border_chars[style]
+  if type(chars) ~= 'table' and type(config.options[style]) == 'table' then
+    chars = config.options[style]
+  end
+
+  if type(chars) ~= 'table' then
+    vim.notify(
+      string.format(
+        "notebook_style: unknown border_style '%s'; falling back to 'solid'",
+        tostring(style)
+      ),
+      vim.log.levels.WARN
+    )
+    return defaults
+  end
+
+  -- Merge over defaults so missing characters never produce nil indexing.
+  return vim.tbl_extend('force', defaults, chars)
 end
 
 --- Create a horizontal border line
