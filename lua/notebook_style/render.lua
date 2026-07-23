@@ -1,15 +1,18 @@
 local M = {}
 local config = require('notebook_style.config')
 local image = require('notebook_style.image')
+local markdown = require('notebook_style.markdown')
 local state = require('notebook_style.state')
 
 -- Namespace for extmarks
 M.ns = vim.api.nvim_create_namespace('notebook_style')
+M.markdown_ns = vim.api.nvim_create_namespace('notebook_style_markdown')
 
 --- Clear all extmarks in the buffer
 --- @param bufnr number Buffer number
 function M.clear(bufnr)
   vim.api.nvim_buf_clear_namespace(bufnr, M.ns, 0, -1)
+  vim.api.nvim_buf_clear_namespace(bufnr, M.markdown_ns, 0, -1)
 end
 
 --- Get border characters based on configuration
@@ -320,6 +323,47 @@ local function build_cell_label(cell, cell_number)
   return label
 end
 
+local function markdown_enabled()
+  local option = config.options.markdown
+  return option ~= false and (type(option) ~= 'table' or option.enabled ~= false)
+end
+
+local function render_markdown_cell(bufnr, cell)
+  if cell.end_line <= cell.start_line then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, cell.start_line + 1, cell.end_line + 1, false)
+  for _, decoration in ipairs(markdown.parse(lines)) do
+    local row = cell.start_line + 1 + decoration.line
+    for _, mark in ipairs(decoration.marks) do
+      if mark.kind == 'conceal' then
+        vim.api.nvim_buf_set_extmark(bufnr, M.markdown_ns, row, mark.col, {
+          end_row = row,
+          end_col = mark.end_col,
+          conceal = '',
+          priority = 220,
+        })
+      elseif mark.kind == 'hl' then
+        vim.api.nvim_buf_set_extmark(bufnr, M.markdown_ns, row, mark.col, {
+          end_row = row,
+          end_col = mark.end_col,
+          hl_group = mark.hl,
+          hl_mode = 'combine',
+          priority = 120,
+        })
+      elseif mark.kind == 'virt' then
+        vim.api.nvim_buf_set_extmark(bufnr, M.markdown_ns, row, mark.col, {
+          virt_text = mark.chunks,
+          virt_text_pos = 'inline',
+          hl_mode = 'combine',
+          priority = 160,
+        })
+      end
+    end
+  end
+end
+
 --- Render a cell border
 --- @param bufnr number Buffer number
 --- @param cell table Cell with start_line and end_line
@@ -411,6 +455,10 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
       hl_mode = 'combine',
       priority = 200,
     })
+  end
+
+  if cell.kind == 'markdown' and markdown_enabled() and not show_delimiter then
+    render_markdown_cell(bufnr, cell)
   end
 
   local lines_below = {}

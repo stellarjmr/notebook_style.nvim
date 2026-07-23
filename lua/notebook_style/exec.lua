@@ -469,6 +469,10 @@ function M.run_cell(bufnr)
     vim.notify('NotebookStyle: cursor is not inside a cell', vim.log.levels.WARN)
     return
   end
+  if cell.kind == 'markdown' then
+    vim.notify('NotebookStyle: markdown cells are not executable', vim.log.levels.INFO)
+    return
+  end
 
   local function execute()
     execute_cell(bufnr, cell)
@@ -485,7 +489,7 @@ function M.run_file(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local runnable = {}
   for _, cell in ipairs(current_cells(bufnr)) do
-    if cells.is_valid_cell(cell) then
+    if cell.kind ~= 'markdown' and cells.is_valid_cell(cell) then
       table.insert(runnable, cell)
     end
   end

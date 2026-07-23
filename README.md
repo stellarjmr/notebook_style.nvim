@@ -7,6 +7,7 @@ A Neovim plugin that renders Python file cells (separated by `# %%` delimiters) 
 
 - **Visual Cell Borders**: Cells are enclosed with solid, dashed, or double borders on all sides
 - **Cell Names**: Display custom cell names from delimiters (e.g., `# %% My Cell Name`)
+- **Jupytext Markdown Cells**: Render `# %% [markdown]` / `[md]` cells while keeping their Python comment source editable
 - **Smart Visibility**:
   - Hides `# %%` delimiters in normal and visual modes (shows the cell label in the top border)
   - Hides cell borders in insert mode for distraction-free editing
@@ -143,6 +144,33 @@ print("Unnamed cell")
 
 Cell names (text after `# %%`) are automatically extracted and displayed in the cell's top border.
 
+### Markdown Cells
+
+Jupytext percent-format Markdown cells render automatically in normal and
+visual modes:
+
+```python
+# %% [markdown] Introduction
+# # Analysis Results
+#
+# The model reached **94% accuracy**. See the [report](https://example.com).
+#
+# - [x] Load the data
+# - [ ] Validate the model
+```
+
+The renderer keeps these Python comments unchanged. It conceals only the
+Jupytext comment prefix and Markdown syntax markers, allowing Neovim to wrap
+the real buffer text instead of replacing complete lines with virtual text.
+Insert mode reveals the original comments for editing.
+
+Supported syntax includes headings, bold/italic/strikethrough text, inline
+code, links, ordered and unordered lists, task items, block quotes, thematic
+breaks, fenced code, and basic pipe-table styling. Table cells are not
+reflowed or resized. Non-comment lines inside a Markdown cell are left
+unchanged. Markdown cells are skipped by `:NotebookStyleRunCell` and
+`:NotebookStyleRunFile`.
+
 ### Commands
 
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
@@ -230,6 +258,9 @@ require('notebook_style').setup({
   hide_delimiter = true,           -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,    -- Hide borders in insert mode
   manual_render = false,           -- If true, start hidden and render on demand
+  markdown = {
+    enabled = true,                -- Render # %% [markdown] / [md] cells
+  },
 
   -- Cell marker (shown in the top border when delimiter is hidden)
   cell_marker = ' ',              -- Python nerd font icon
@@ -448,6 +479,7 @@ The plugin uses Neovim's extmarks API to render virtual text for borders without
 
 - Your file remains unchanged
 - Borders are visual only and don't affect formatting
+- Markdown rendering conceals source markers rather than replacing complete lines, so wrapped text remains aligned
 - No performance impact on large files
 - Works seamlessly with other plugins
 
@@ -478,6 +510,7 @@ This checks Rust formatting, runs `cargo test`, builds the release backend, and 
 ## Similar Projects
 
 - [jupytext.nvim](https://github.com/GCBallesteros/jupytext.nvim) - Edit Jupyter notebooks in Neovim
+- [jupynvim](https://github.com/sheng-tse/jupynvim) - Native `.ipynb` editing and the extmark-based Markdown rendering approach that inspired this implementation
 - [magma-nvim](https://github.com/dccsillag/magma-nvim) - Interactive code evaluation
 
 ## License

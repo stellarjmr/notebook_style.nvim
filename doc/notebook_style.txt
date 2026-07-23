@@ -137,6 +137,29 @@ in normal/visual modes and showing them in insert mode.
 Cell names (text after # %%) are automatically extracted and displayed in the
 cell's top border (e.g., " #1 Data Loading").
 
+Markdown cells~
+
+Jupytext percent-format Markdown cells are detected from # %% [markdown] and
+# %% [md] delimiters: >python
+    # %% [markdown] Introduction
+    # # Analysis Results
+    #
+    # The model reached **94% accuracy**.
+    #
+    # - [x] Load the data
+    # - [ ] Validate the model
+<
+
+In normal and visual modes, notebook_style conceals the Jupytext comment
+prefix and Markdown syntax markers while highlighting the original buffer
+text. Insert mode reveals the unchanged Python comments for editing.
+
+Supported syntax includes headings, emphasis, strikethrough, inline code,
+links, ordered and unordered lists, task items, block quotes, thematic breaks,
+fenced code, and basic pipe-table styling. Tables are not resized or reflowed.
+Non-comment lines inside a Markdown cell are left unchanged. Markdown cells
+are not executable and are skipped by RunCell and RunFile.
+
 ==============================================================================
 4. COMMANDS                                         *notebook_style-commands*
 
@@ -285,6 +308,9 @@ Default configuration: >lua
       -- Visibility options
       hide_delimiter = true,           -- Hide # %% in normal/visual modes
       hide_border_in_insert = true,    -- Hide borders in insert mode
+      markdown = {
+        enabled = true,                -- Render [markdown] / [md] cells
+      },
 
       -- Cell marker (shown in the top border when delimiter is hidden)
       cell_marker = ' ',              -- Python nerd font icon
@@ -436,6 +462,25 @@ NotebookCellBorder
 NotebookCellDelimiter
     Highlight group for cell delimiter markers.
     Default: links to configured delimiter color
+
+NotebookMarkdownH1 through NotebookMarkdownH6
+    Heading highlights for rendered Markdown cells.
+
+NotebookMarkdownBold, NotebookMarkdownItalic, NotebookMarkdownBoldItalic
+    Inline emphasis highlights for rendered Markdown cells.
+
+NotebookMarkdownStrike, NotebookMarkdownCode, NotebookMarkdownCodeBlock
+    Strikethrough and inline/fenced code highlights.
+
+NotebookMarkdownLink, NotebookMarkdownBullet, NotebookMarkdownQuote
+    Link, list marker, and block quote highlights.
+
+NotebookMarkdownUnchecked, NotebookMarkdownChecked, NotebookMarkdownTodo
+    Task item state highlights.
+
+NotebookMarkdownRule, NotebookMarkdownTableHeader,
+NotebookMarkdownTableBorder
+    Thematic break and table highlights.
 
 You can customize these highlight groups: >vim
     :highlight NotebookCellBorder guifg=#FF79C6

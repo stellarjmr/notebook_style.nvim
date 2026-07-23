@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Added built-in rendering for Jupytext `# %% [markdown]` and `# %% [md]` cells. Markdown remains unchanged in the Python buffer and is styled in normal/visual modes using source-aligned conceal and highlight extmarks.
+- Added support for headings, emphasis, strikethrough, inline code, links, lists, task items, quotes, thematic breaks, fenced code, and basic table styling in Markdown cells.
+
+### Changed
+- Inline execution now skips Markdown cells, and running a Markdown-only file reports that there are no runnable cells.
+
 ## [0.8.1] - 2026-06-27
 
 ### Fixed

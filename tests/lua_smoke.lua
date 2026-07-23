@@ -216,6 +216,206 @@ test('default delimiter ignores IPython magic comments', function()
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
+test('cell detection classifies Jupytext markdown markers', function()
+  local config = require('notebook_style.config')
+  local cells = require('notebook_style.cells')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% [markdown]',
+    '# # Heading',
+    '# %% [MD] Notes',
+    '# More text',
+    '# %% Analysis',
+    'value = 1',
+  })
+
+  local delimiters = cells.find_delimiters(buf, config.options.cell_delimiter)
+  local cell_list = cells.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  assert_eq(cell_list[1].kind, 'markdown')
+  assert_eq(cell_list[1].name, 'Markdown', 'bare markdown marker should get a readable label')
+  assert_eq(cell_list[2].kind, 'markdown')
+  assert_eq(cell_list[2].name, 'Notes', 'text after markdown marker should be used as the label')
+  assert_eq(cell_list[3].kind, 'code')
+  assert_eq(cell_list[3].name, 'Analysis')
+
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('markdown parser returns source-aligned conceal and highlight ranges', function()
+  local markdown = require('notebook_style.markdown')
+  local decorations = markdown.parse({
+    '# **bold**',
+    '# # Heading with [link](https://example.com/a_(b))',
+    '# - [x] finished',
+    '# > quoted',
+    '# | Name | Value |',
+    '# | :--- | ---: |',
+    '# | alpha | 1 |',
+    '# ```python',
+    '# **literal code**',
+    '# ```',
+    'not_a_comment = true',
+  })
+
+  local function marks_at(line)
+    for _, decoration in ipairs(decorations) do
+      if decoration.line == line then
+        return decoration.marks
+      end
+    end
+    return {}
+  end
+
+  local function has_mark(line, expected)
+    for _, mark in ipairs(marks_at(line)) do
+      local matches = true
+      for key, value in pairs(expected) do
+        if mark[key] ~= value then
+          matches = false
+          break
+        end
+      end
+      if matches then
+        return true
+      end
+    end
+    return false
+  end
+
+  assert_true(has_mark(0, { kind = 'conceal', col = 0, end_col = 2 }), 'Jupytext prefix should be concealed')
+  assert_true(has_mark(0, { kind = 'conceal', col = 2, end_col = 4 }), 'bold opener should be concealed')
+  assert_true(
+    has_mark(0, { kind = 'hl', col = 4, end_col = 8, hl = 'NotebookMarkdownBold' }),
+    'bold content should keep source byte columns'
+  )
+  assert_true(has_mark(0, { kind = 'conceal', col = 8, end_col = 10 }), 'bold closer should be concealed')
+  assert_true(has_mark(1, { kind = 'virt', col = 2 }), 'heading should receive an inline marker')
+  assert_true(has_mark(1, { kind = 'hl', hl = 'NotebookMarkdownLink' }), 'balanced links should be highlighted')
+  assert_true(has_mark(2, { kind = 'virt', col = 2 }), 'task list should receive an inline checkbox')
+  assert_true(has_mark(3, { kind = 'virt', col = 2 }), 'quote should receive an inline marker')
+  assert_true(
+    has_mark(4, { kind = 'hl', hl = 'NotebookMarkdownTableHeader' }),
+    'only the table header should receive header styling'
+  )
+  assert_true(
+    not has_mark(6, { kind = 'hl', hl = 'NotebookMarkdownTableHeader' }),
+    'table body should not receive header styling'
+  )
+  assert_true(has_mark(5, { kind = 'hl', hl = 'NotebookMarkdownTableBorder' }), 'table pipes should be highlighted')
+  assert_true(
+    has_mark(8, { kind = 'hl', hl = 'NotebookMarkdownCodeBlock' }),
+    'fenced code should be highlighted without parsing inline markers'
+  )
+  assert_true(
+    not has_mark(8, { kind = 'hl', hl = 'NotebookMarkdownBold' }),
+    'inline emphasis should stay literal inside fenced code'
+  )
+  assert_eq(#marks_at(10), 0, 'non-comment lines should be left unchanged')
+
+  for _, decoration in ipairs(decorations) do
+    for _, mark in ipairs(decoration.marks) do
+      assert_true(mark.kind ~= 'overlay', 'markdown rendering should never replace a complete source line')
+    end
+  end
+end)
+
+test('markdown decorations render only outside insert mode', function()
+  local notebook = require('notebook_style')
+  local render = require('notebook_style.render')
+  local cells_mod = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  notebook.setup({ keymaps = false, markdown = { enabled = true } })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% [markdown]',
+    '# # Rendered heading',
+    '# A long paragraph with **bold** text and a [link](https://example.com).',
+    '# %% Code',
+    'value = 1',
+  })
+  vim.api.nvim_set_current_buf(buf)
+
+  local delimiters = cells_mod.find_delimiters(buf, config.options.cell_delimiter)
+  local cell_list = cells_mod.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  render.render_all(buf, cell_list, 'n', vim.api.nvim_get_current_win())
+
+  local marks = vim.api.nvim_buf_get_extmarks(buf, render.markdown_ns, 0, -1, { details = true })
+  assert_true(#marks > 0, 'normal mode should render markdown decorations')
+  for _, mark in ipairs(marks) do
+    assert_true(mark[2] < 3, 'code cells should not receive markdown decorations')
+    assert_true((mark[4] or {}).virt_text_pos ~= 'overlay', 'markdown should not use whole-line overlays')
+  end
+
+  render.render_all(buf, cell_list, 'i', vim.api.nvim_get_current_win())
+  assert_eq(
+    #vim.api.nvim_buf_get_extmarks(buf, render.markdown_ns, 0, -1, {}),
+    0,
+    'insert mode should reveal raw Jupytext comments'
+  )
+
+  local original_markdown_config = config.options.markdown
+  config.options.markdown = false
+  render.render_all(buf, cell_list, 'n', vim.api.nvim_get_current_win())
+  assert_eq(
+    #vim.api.nvim_buf_get_extmarks(buf, render.markdown_ns, 0, -1, {}),
+    0,
+    'markdown=false should leave source comments unrendered'
+  )
+  config.options.markdown = original_markdown_config
+
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('markdown cells do not start the execution kernel', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local buf = vim.api.nvim_create_buf(false, true)
+  local old_notify = vim.notify
+  local old_start_kernel = exec.start_kernel
+  local messages = {}
+  local starts = 0
+
+  local ok, err = pcall(function()
+    notebook.setup({ keymaps = false, auto_start_kernel = true })
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      '# %% [markdown]',
+      '# This is documentation, not Python.',
+    })
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+    vim.notify = function(message)
+      table.insert(messages, tostring(message))
+    end
+    exec.start_kernel = function()
+      starts = starts + 1
+    end
+
+    exec.run_cell(buf)
+    exec.run_file(buf)
+    assert_eq(starts, 0, 'markdown cells should not start a kernel')
+    assert_true(
+      table.concat(messages, '\n'):find('markdown cells are not executable', 1, true) ~= nil,
+      'running a markdown cell should explain why it was skipped'
+    )
+    assert_true(
+      table.concat(messages, '\n'):find('no runnable cells found', 1, true) ~= nil,
+      'running a markdown-only file should report that there is nothing to execute'
+    )
+  end)
+
+  vim.notify = old_notify
+  exec.start_kernel = old_start_kernel
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  if not ok then
+    error(err, 0)
+  end
+end)
+
 test('render creates and clears cell extmarks', function()
   local notebook = require('notebook_style')
   local render = require('notebook_style.render')
