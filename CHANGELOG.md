@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.9.0] - 2026-07-23
 
 ### Added
 - Added built-in rendering for Jupytext `# %% [markdown]` and `# %% [md]` cells. Markdown remains unchanged in the Python buffer and is styled in normal/visual modes using source-aligned conceal and highlight extmarks.
