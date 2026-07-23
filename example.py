@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# %% [markdown] Overview
+# # Notebook Style Demo
+#
+# Jupytext Markdown cells render in normal mode while preserving the original
+# Python comments. Enter insert mode to edit the source.
+#
+# - **Bold**, *italic*, `inline code`, and [links](https://jupyter.org)
+# - Lists, quotes, fenced code, and basic table styling
+
 # %% Import Libraries
 # Cell 1: Import libraries
 import numpy as np

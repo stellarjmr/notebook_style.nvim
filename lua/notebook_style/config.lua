@@ -45,6 +45,11 @@ M.defaults = {
   hide_delimiter = true,  -- Hide # %% in normal/visual modes
   hide_border_in_insert = true,  -- Hide borders in insert mode
 
+  -- Render Jupytext # %% [markdown] / [md] cells outside insert mode.
+  markdown = {
+    enabled = true,
+  },
+
   -- Cell marker (shown in the top border when delimiter is hidden)
   -- Use a nerd font icon for a nice visual indicator
   cell_marker = ' ',  --  is the Python nerd font icon
@@ -122,6 +127,36 @@ function M.apply_highlights()
   vim.api.nvim_set_hl(0, 'NotebookCellError', {
     fg = M.options.colors.error or '#F7768E',
   })
+
+  local markdown_highlights = {
+    NotebookMarkdownText = { link = 'Normal' },
+    NotebookMarkdownH1 = { link = 'Title' },
+    NotebookMarkdownH2 = { link = 'Title' },
+    NotebookMarkdownH3 = { link = 'Special' },
+    NotebookMarkdownH4 = { link = 'Identifier' },
+    NotebookMarkdownH5 = { link = 'Type' },
+    NotebookMarkdownH6 = { link = 'Comment' },
+    NotebookMarkdownBold = { bold = true },
+    NotebookMarkdownItalic = { italic = true },
+    NotebookMarkdownBoldItalic = { bold = true, italic = true },
+    NotebookMarkdownStrike = { strikethrough = true },
+    NotebookMarkdownCode = { link = 'String' },
+    NotebookMarkdownCodeBlock = { link = 'String' },
+    NotebookMarkdownCodeInfo = { link = 'Comment' },
+    NotebookMarkdownLink = { link = 'Underlined' },
+    NotebookMarkdownBullet = { link = 'Special' },
+    NotebookMarkdownUnchecked = { link = 'DiagnosticWarn' },
+    NotebookMarkdownChecked = { link = 'DiagnosticOk' },
+    NotebookMarkdownTodo = { link = 'DiagnosticInfo' },
+    NotebookMarkdownQuote = { link = 'Comment' },
+    NotebookMarkdownRule = { link = 'Comment' },
+    NotebookMarkdownTableHeader = { bold = true },
+    NotebookMarkdownTableBorder = { link = 'Comment' },
+  }
+  for name, value in pairs(markdown_highlights) do
+    value.default = true
+    vim.api.nvim_set_hl(0, name, value)
+  end
 end
 
 function M.setup(opts)

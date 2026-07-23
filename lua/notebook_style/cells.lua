@@ -18,6 +18,24 @@ local function is_default_delimiter(line)
   return next_char == '' or next_char:match('%s') ~= nil
 end
 
+local function delimiter_kind(line)
+  local marker = line:match('^#%s*%%%%%s*%[([^%]]+)%]')
+  marker = marker and marker:lower() or nil
+  if marker == 'markdown' or marker == 'md' then
+    return 'markdown'
+  end
+  return 'code'
+end
+
+local function markdown_name(name)
+  local marker, remainder = name:match('^%[([^%]]+)%]%s*(.-)%s*$')
+  marker = marker and marker:lower() or nil
+  if marker ~= 'markdown' and marker ~= 'md' then
+    return name
+  end
+  return remainder ~= '' and remainder or 'Markdown'
+end
+
 --- Find all cell delimiters in the buffer
 --- @param bufnr number Buffer number
 --- @param pattern string Delimiter pattern
@@ -87,12 +105,16 @@ function M.get_cells(bufnr, delimiters, total_lines)
 
     -- Extract cell name from delimiter line
     local delimiter_content = all_lines[start_line + 1] or ''
+    local kind = delimiter_kind(delimiter_content)
     local name = nil
     if config.options.show_cell_name then
       local pattern = config.options.cell_name_pattern or '^#%s*%%%%%s*(.-)%s*$'
       local captured = delimiter_content:match(pattern)
       if captured and vim.trim(captured) ~= '' then
         name = vim.trim(captured)
+        if kind == 'markdown' then
+          name = markdown_name(name)
+        end
       end
     end
 
@@ -103,6 +125,7 @@ function M.get_cells(bufnr, delimiters, total_lines)
       start_line = start_line,
       end_line = end_line,
       name = name,
+      kind = kind,
     })
   end
 

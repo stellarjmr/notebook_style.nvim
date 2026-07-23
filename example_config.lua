@@ -23,6 +23,9 @@ return {
     -- Cells render automatically by default; <leader>rs toggles visibility.
     hide_delimiter = true,
     hide_border_in_insert = true,
+    markdown = {
+      enabled = true,  -- Render # %% [markdown] / [md] cells in normal mode
+    },
 
     -- Cell marker shown in the top border (requires Nerd Font)
     cell_marker = ' Cell',  --  is Python nerd font icon
