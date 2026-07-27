@@ -260,6 +260,7 @@ require('notebook_style').setup({
   manual_render = false,           -- If true, start hidden and render on demand
   markdown = {
     enabled = true,                -- Render # %% [markdown] / [md] cells
+    cell_marker = nil,             -- Optional; falls back to cell_marker
   },
 
   -- Cell marker (shown in the top border when delimiter is hidden)
@@ -431,8 +432,11 @@ Customize the text shown in the top border when `# %%` delimiters are hidden:
 
 ```lua
 require('notebook_style').setup({
-  -- With Python nerd font icon (default, requires a Nerd Font)
-  cell_marker = ' Cell',  --  is the Python icon
+  -- Use separate Nerd Font icons for code and Markdown cells
+  cell_marker = ' ',
+  markdown = {
+    cell_marker = '󰍔 ',
+  },
 
   -- Or use other icons/text
   cell_marker = '📘 Cell',          -- Book emoji

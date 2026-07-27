@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Added `markdown.cell_marker` for using a distinct marker in Markdown cell borders; when unset, Markdown cells continue to use the top-level `cell_marker`.
+
 ## [0.9.0] - 2026-07-23
 
 ### Added

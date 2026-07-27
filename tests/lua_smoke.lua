@@ -447,9 +447,14 @@ test('hidden delimiters render labels in top borders', function()
   local render = require('notebook_style.render')
   local buf = vim.api.nvim_create_buf(false, true)
 
+  notebook.setup({
+    keymaps = false,
+    cell_marker = 'CODE ',
+    markdown = { cell_marker = 'MD ' },
+  })
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-    '# %% Top',
-    'value = 1',
+    '# %% [markdown] Top',
+    '# Markdown text',
     '# %% Second',
     'value = 2',
   })
@@ -474,8 +479,8 @@ test('hidden delimiters render labels in top borders', function()
   notebook.enable(buf)
   notebook.render(buf)
   assert_true(vim.wait(1000, function()
-    return has_titled_border(0, '#1 Top') and has_titled_border(2, '#2 Second')
-  end, 20), 'cell labels should be rendered in top borders')
+    return has_titled_border(0, 'MD #1 Top') and has_titled_border(2, 'CODE #2 Second')
+  end, 20), 'markdown and code markers should be rendered independently in top borders')
 
   notebook.disable(buf)
   vim.api.nvim_buf_delete(buf, { force = true })

@@ -25,6 +25,7 @@ return {
     hide_border_in_insert = true,
     markdown = {
       enabled = true,  -- Render # %% [markdown] / [md] cells in normal mode
+      cell_marker = '󰍔 ',  -- Markdown nerd font icon
     },
 
     -- Cell marker shown in the top border (requires Nerd Font)

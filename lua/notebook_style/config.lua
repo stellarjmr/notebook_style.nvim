@@ -48,6 +48,7 @@ M.defaults = {
   -- Render Jupytext # %% [markdown] / [md] cells outside insert mode.
   markdown = {
     enabled = true,
+    cell_marker = nil,  -- Falls back to the top-level cell_marker
   },
 
   -- Cell marker (shown in the top border when delimiter is hidden)

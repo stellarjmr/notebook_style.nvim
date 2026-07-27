@@ -297,6 +297,13 @@ end
 --- @return string Formatted cell label
 local function build_cell_label(cell, cell_number)
   local icon = config.options.cell_marker or ''
+  local markdown_options = config.options.markdown
+  if cell.kind == 'markdown'
+    and type(markdown_options) == 'table'
+    and markdown_options.cell_marker ~= nil
+  then
+    icon = markdown_options.cell_marker
+  end
   local show_name = config.options.show_cell_name and cell.name
   local show_number = config.options.show_cell_number
 
