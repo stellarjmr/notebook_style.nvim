@@ -139,6 +139,13 @@ local function update_cells(bufnr, winid)
   -- Get current mode
   local mode = vim.api.nvim_get_mode().mode
 
+  -- Drop identity marks (and outputs) of cells whose delimiter was deleted.
+  -- Skipped in insert mode so retyping a delimiter (cc/S) does not lose the
+  -- cell's outputs; the ModeChanged update runs the GC after leaving insert.
+  if not mode:match('^i') then
+    state.sync_cells(bufnr, cell_list)
+  end
+
   render.render_all(bufnr, cell_list, mode, winid)
 end
 

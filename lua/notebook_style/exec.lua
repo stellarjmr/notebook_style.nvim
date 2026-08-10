@@ -219,6 +219,10 @@ local function clear_output_images(outputs)
   end
 end
 
+-- Release transmitted images when a cell's identity is garbage-collected
+-- after its delimiter was deleted.
+state.set_on_outputs_dropped(clear_output_images)
+
 local function clear_output_map_images(outputs_by_cell)
   for _, outputs in pairs(outputs_by_cell or {}) do
     clear_output_images(outputs)

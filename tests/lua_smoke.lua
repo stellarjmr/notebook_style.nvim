@@ -612,6 +612,114 @@ test('clear output commands remove state, rendering, and output view', function(
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
+test('extmark identity keeps outputs attached across edits', function()
+  local cells_mod = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local state = require('notebook_style.state')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %% Alpha',
+    'print("first")',
+    '# %% Beta',
+    'print("second")',
+  })
+
+  local function scan()
+    local delimiters = cells_mod.find_delimiters(buf, config.options.cell_delimiter)
+    return cells_mod.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  end
+
+  local cell_list = scan()
+  local beta_id = state.cell_id(buf, cell_list[2])
+  state.apply_event(buf, beta_id, { kind = 'execute_input', execution_count = 1 })
+  state.apply_event(buf, beta_id, { kind = 'stream', name = 'stdout', text = 'second output' })
+
+  -- Insert a new cell above: Beta shifts from ordinal 2 to ordinal 3
+  vim.api.nvim_buf_set_lines(buf, 0, 0, false, { '# %% Inserted', 'x = 1' })
+  cell_list = scan()
+  state.sync_cells(buf, cell_list)  -- production order: GC runs before rendering resolves ids
+  assert_eq(#cell_list, 3, 'expected three cells after inserting one above')
+  assert_eq(state.cell_id(buf, cell_list[3]), beta_id, 'Beta should keep its identity after inserting a cell above')
+  assert_eq(state.outputs(buf, cell_list[3])[1].text, 'second output', 'Beta output should follow the cell')
+
+  -- Rename the delimiter (whole-line replacement): identity must survive the
+  -- GC-before-render ordering used by update_cells
+  local beta_row = cell_list[3].delimiter
+  vim.api.nvim_buf_set_lines(buf, beta_row, beta_row + 1, false, { '# %% Renamed Beta' })
+  cell_list = scan()
+  state.sync_cells(buf, cell_list)
+  assert_eq(state.cell_id(buf, cell_list[3]), beta_id, 'Beta should keep its identity after renaming the delimiter')
+  assert_eq(state.outputs(buf, cell_list[3])[1].text, 'second output', 'Beta output should survive renaming')
+
+  -- Open a new line right below the delimiter (like `o`): identity is stable
+  vim.api.nvim_buf_set_lines(buf, beta_row + 1, beta_row + 1, false, { 'y = 2' })
+  cell_list = scan()
+  state.sync_cells(buf, cell_list)
+  assert_eq(state.cell_id(buf, cell_list[3]), beta_id, 'Beta should keep its identity after opening a line below the delimiter')
+
+  state.clear(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('deleting a cell drops its state and keeps neighbor outputs', function()
+  local cells_mod = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local state = require('notebook_style.state')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  -- Identical plain delimiters: identity collisions cannot be resolved by
+  -- delimiter text, only by the end-of-line mark anchor
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '# %%',
+    'print("first")',
+    '# %%',
+    'print("second")',
+  })
+
+  local function scan()
+    local delimiters = cells_mod.find_delimiters(buf, config.options.cell_delimiter)
+    return cells_mod.get_cells(buf, delimiters, vim.api.nvim_buf_line_count(buf))
+  end
+
+  local cell_list = scan()
+  local alpha_id = state.cell_id(buf, cell_list[1])
+  local beta_id = state.cell_id(buf, cell_list[2])
+  state.apply_event(buf, alpha_id, { kind = 'stream', name = 'stdout', text = 'first output' })
+  state.apply_event(buf, beta_id, { kind = 'stream', name = 'stdout', text = 'second output' })
+
+  -- Delete the whole first cell; its identity mark collapses onto the second
+  -- cell's delimiter line
+  vim.api.nvim_buf_set_lines(buf, 0, 2, false, {})
+  cell_list = scan()
+  state.sync_cells(buf, cell_list)  -- production order: GC runs before rendering resolves ids
+  assert_eq(#cell_list, 1, 'expected one cell after deleting the first cell')
+  assert_eq(state.cell_id(buf, cell_list[1]), beta_id, 'second cell should keep its identity when the first is deleted')
+  assert_eq(state.outputs(buf, cell_list[1])[1].text, 'second output', 'second cell output should remain after the collision')
+
+  local buffer_state = state.get(buf)
+  assert_eq(buffer_state.outputs[alpha_id], nil, 'deleted cell output state should be dropped after resolving the collision')
+
+  -- A late kernel event for the dropped cell must not resurrect its state
+  state.apply_event(buf, alpha_id, { kind = 'stream', name = 'stdout', text = 'late output' })
+  assert_eq(buffer_state.outputs[alpha_id], nil, 'late events for garbage-collected cells should be ignored')
+
+  -- Turning the delimiter into a plain comment orphans the identity mark;
+  -- sync_cells garbage-collects the mark and its outputs
+  vim.api.nvim_buf_set_lines(buf, 0, 1, false, { '# not a delimiter' })
+  cell_list = scan()
+  assert_eq(#cell_list, 0, 'expected no cells after removing the delimiter')
+  state.sync_cells(buf, cell_list)
+  buffer_state = state.get(buf)
+  assert_eq(buffer_state.outputs[beta_id], nil, 'orphaned cell output state should be garbage-collected')
+  assert_eq(next(buffer_state.mark_delimiters), nil, 'orphaned identity marks should be garbage-collected')
+  state.apply_event(buf, beta_id, { kind = 'stream', name = 'stdout', text = 'late output' })
+  assert_eq(buffer_state.outputs[beta_id], nil, 'late events after orphan GC should be ignored')
+
+  state.clear(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
 test('checkhealth notebook_style reports all sections', function()
   vim.cmd('checkhealth notebook_style')
   local lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
