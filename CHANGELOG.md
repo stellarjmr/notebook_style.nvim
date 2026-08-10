@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.10.0] - 2026-08-10
 
 ### Changed
 - Cell identity is now anchored with extmarks on delimiter lines instead of delimiter text + ordinal. Inline outputs, execution counts, and busy indicators follow their cell when cells are inserted, moved, or their delimiter is renamed; outputs of deleted cells are garbage-collected (including transmitted images) instead of re-attaching to unrelated cells, and late kernel events for garbage-collected cells are ignored. Garbage collection is deferred while in insert mode so retyping a delimiter (e.g. `cc`) keeps the cell's outputs. Known limitation: undoing a cell deletion restores the text but not the cell's previous outputs.
