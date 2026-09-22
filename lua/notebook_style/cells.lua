@@ -71,6 +71,14 @@ function M.get_cells(bufnr, delimiters, total_lines)
   local cells = {}
 
   if #delimiters == 0 then
+    if vim.bo[bufnr].filetype == 'python' or vim.api.nvim_buf_get_name(bufnr):match('%.py$') then
+      cells[1] = {
+        start_line = 0,
+        end_line = total_lines - 1,
+        kind = 'code',
+        implicit = true,
+      }
+    end
     return cells
   end
 
@@ -136,7 +144,7 @@ end
 --- @param cell table Cell with start_line and end_line
 --- @return boolean True if cell has content
 function M.is_valid_cell(cell)
-  return cell.end_line > cell.start_line
+  return cell.implicit or cell.end_line > cell.start_line
 end
 
 --- Find the cell containing a 0-indexed line number

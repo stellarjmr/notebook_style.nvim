@@ -47,7 +47,9 @@ end
 local function current_cells(bufnr)
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
   local delimiters = cells.find_delimiters(bufnr, config.options.cell_delimiter)
-  return cells.get_cells(bufnr, delimiters, total_lines)
+  local cell_list = cells.get_cells(bufnr, delimiters, total_lines)
+  state.sync_cells(bufnr, cell_list)
+  return cell_list
 end
 
 local function cursor_line_for(bufnr)
@@ -216,7 +218,7 @@ local function output_title(cell, cell_index, execution_count)
   local title = ' Notebook Output'
   if execution_count then
     title = title .. ' Out[' .. execution_count .. ']'
-  elseif cell_index then
+  elseif cell_index and not cell.implicit then
     title = title .. ' #' .. cell_index
   end
   if cell and cell.name then

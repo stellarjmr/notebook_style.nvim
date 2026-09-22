@@ -795,6 +795,320 @@ test('open output creates readonly focusable floating buffer', function()
   vim.o.lines = old_lines
 end)
 
+test('plain Python buffers expose one implicit execution cell', function()
+  local config = require('notebook_style.config')
+  local cells = require('notebook_style.cells')
+  local buf = vim.api.nvim_create_buf(false, true)
+  config.setup({})
+
+  local function scan()
+    return cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), vim.api.nvim_buf_line_count(buf))
+  end
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'value = 17' })
+  assert_eq(#scan(), 0, 'non-Python buffers must not acquire an implicit cell')
+  vim.bo[buf].filetype = 'python'
+  local cell = scan()[1]
+  assert_true(cell.implicit, 'Python without delimiters should have an implicit cell')
+  assert_eq(cell.start_line, 0, 'the first source line must be included')
+  assert_eq(cell.end_line, 0, 'one-line files must be executable')
+  assert_true(cells.is_valid_cell(cell))
+
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'value = 17', '', '' })
+  assert_eq(scan()[1].end_line, 2, 'file output should follow trailing blank lines')
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%' })
+  assert_true(not scan()[1].implicit, 'an empty explicit cell must not fall back to file execution')
+  assert_true(not cells.is_valid_cell(scan()[1]))
+
+  config.options.cell_delimiter = '^# CELL'
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# CELL', 'value = 17' })
+  assert_true(not scan()[1].implicit, 'custom delimiters must keep working')
+  vim.api.nvim_buf_delete(buf, { force = true })
+end)
+
+test('implicit files render only real output at EOF in auto and manual modes', function()
+  local notebook = require('notebook_style')
+  local cells = require('notebook_style.cells')
+  local render = require('notebook_style.render')
+  local state = require('notebook_style.state')
+  local exec = require('notebook_style.exec')
+
+  for _, manual in ipairs({ false, true }) do
+    notebook.setup({ keymaps = false, manual_render = manual })
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'value = 17', 'value', '' })
+    local cell = cells.get_cells(buf, {}, 3)[1]
+    local id = state.cell_id(buf, cell)
+    local function marks()
+      return vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })
+    end
+    local function settle()
+      assert_true(vim.wait(1000, function() return not notebook.pending_updates[buf] end, 10))
+    end
+
+    notebook.enable(buf)
+    settle()
+    assert_eq(notebook.render_visible[buf], not manual)
+    assert_eq(#marks(), 0, 'unexecuted files must have no code borders')
+    state.apply_event(buf, id, { kind = 'execute_input', execution_count = 4 })
+    notebook.render(buf)
+    settle()
+    assert_eq(#marks(), 0, 'busy files without output must have no running placeholder')
+
+    state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = 'first output' })
+    notebook.render(buf)
+    settle()
+    assert_eq(#marks(), 1, 'only the output extmark should exist')
+    assert_eq(marks()[1][2], 2, 'output must be below the actual last line')
+    assert_eq(marks()[1][4].virt_text, nil, 'source lines must not have border text')
+    assert_eq(marks()[1][4].conceal, nil, 'the first source line must not be concealed')
+    assert_true(marks()[1][4].virt_lines[1][1][1]:find('Out[*]', 1, true) ~= nil)
+
+    for _, mode in ipairs({ 'n', 'v', 'i' }) do
+      render.render_all(buf, { cell }, mode, vim.api.nvim_get_current_win())
+      assert_eq(#marks(), mode == 'i' and 0 or 1, 'output visibility should follow existing mode behavior')
+    end
+    for _, width in ipairs({ 37, 81 }) do
+      render.clear(buf)
+      render.render_cell(buf, cell, true, false, width, 1)
+      for _, row in ipairs(marks()[1][4].virt_lines) do
+        local text = ''
+        for _, chunk in ipairs(row) do text = text .. chunk[1] end
+        assert_eq(vim.fn.strdisplaywidth(text), width, 'file output borders should fit the window')
+      end
+    end
+
+    notebook.toggle_render(buf)
+    state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = ' updated' })
+    vim.api.nvim_exec_autocmds('ModeChanged', { buffer = buf })
+    settle()
+    assert_eq(#marks(), 0, 'hidden rendering must stay hidden on updates')
+    notebook.toggle_render(buf)
+    settle()
+    assert_eq(#marks(), 1)
+
+    vim.api.nvim_win_set_cursor(0, { 1, 0 })
+    local win, output_buf = notebook.open_output(buf)
+    assert_eq(table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), '\n'), 'first output updated')
+    vim.api.nvim_set_current_win(vim.fn.bufwinid(buf))
+    exec.clear_cell_output(buf)
+    settle()
+    assert_true(not vim.api.nvim_win_is_valid(win), 'clear should close the existing viewer')
+    assert_eq(#marks(), 0, 'cleared file output must not leave an empty frame')
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+end)
+
+test('file identity survives text edits and retires on delimiter transitions', function()
+  local notebook = require('notebook_style')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local state = require('notebook_style.state')
+  local image = require('notebook_style.image')
+  local buf = vim.api.nvim_create_buf(false, true)
+  local old_clear = image.clear
+  local cleared = {}
+
+  local ok, err = pcall(function()
+    notebook.setup({ keymaps = false })
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'value = 17' })
+    image.clear = function(output) table.insert(cleared, output) end
+    local function scan()
+      local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), vim.api.nvim_buf_line_count(buf))
+      state.sync_cells(buf, list)
+      return list[1]
+    end
+    local id = state.cell_id(buf, scan())
+    local output = state.apply_event(buf, id, { kind = 'display_data', data = { ['image/png'] = 'test image' } })
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'renamed = 23', 'print(renamed)', '' })
+    assert_eq(state.cell_id(buf, scan()), id, 'replacing the first line must not change file identity')
+    assert_eq(state.outputs(buf, scan())[1], output)
+    assert_eq(#vim.api.nvim_buf_get_extmarks(buf, state.identity_ns, 0, -1, {}), 0)
+
+    state.apply_event(buf, id, { kind = 'execute_input', execution_count = 2 })
+    assert_eq(cleared[1], output, 'rerunning should release old file images')
+    assert_eq(#state.outputs(buf, scan()), 0)
+    state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = 'old file output' })
+    vim.api.nvim_buf_set_lines(buf, 0, 0, false, { '# %% Cell' })
+    local explicit = scan()
+    local explicit_id = state.cell_id(buf, explicit)
+    assert_true(not explicit.implicit)
+    assert_eq(state.get(buf).outputs[id], nil)
+    state.apply_event(buf, explicit_id, { kind = 'stream', name = 'stdout', text = 'cell output' })
+
+    vim.api.nvim_buf_set_lines(buf, 0, 1, false, { '# ordinary comment' })
+    local file = scan()
+    local new_id = state.cell_id(buf, file)
+    assert_true(new_id ~= id, 'a mode round-trip must allocate a fresh file identity')
+    assert_eq(state.get(buf).outputs[explicit_id], nil, 'old cell output must not transfer to the file')
+    for _, retired_id in ipairs({ id, explicit_id }) do
+      state.apply_event(buf, retired_id, { kind = 'stream', name = 'stdout', text = 'late output' })
+      assert_eq(state.get(buf).outputs[retired_id], nil, 'late events must not revive retired identities')
+    end
+    local final_image = state.apply_event(buf, new_id, { kind = 'display_data', data = { ['image/png'] = 'new image' } })
+    notebook.disable(buf)
+    assert_eq(cleared[#cleared], final_image, 'disabling should release file images')
+  end)
+
+  image.clear = old_clear
+  notebook.disable(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  if not ok then error(err, 0) end
+end)
+
+test('plain files execute silently, stream output and plot through the existing kernel', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+  vim.fn.system({ python, '-c', 'import matplotlib' })
+  if vim.v.shell_error ~= 0 then skip_now('python3 cannot import matplotlib') end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local cells = require('notebook_style.cells')
+  local state = require('notebook_style.state')
+  local render = require('notebook_style.render')
+  local image = require('notebook_style.image')
+  local output_view = require('notebook_style.output_view')
+  local project = vim.fn.tempname()
+  local old_notify, old_event, old_supported = vim.notify, state.apply_event, image.supported
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local idle, replies = 0, 0
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    -- Link the environment directory, not just its binary, so venv-installed
+    -- packages remain discoverable without registering any user kernelspec.
+    local prefix = vim.trim(vim.fn.system({ python, '-c', 'import sys; print(sys.prefix)' }))
+    assert_true(vim.loop.fs_symlink(prefix, project .. '/.venv', { dir = true }))
+    vim.env.JUPYTER_PATH = project
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    image.supported = function() return false end
+    state.apply_event = function(target_buf, id, event)
+      local output = old_event(target_buf, id, event)
+      if target_buf == buf then
+        if event.kind == 'status' and event.state == 'idle' then idle = idle + 1 end
+        if event.kind == 'execute_reply' then replies = replies + 1 end
+      end
+      return output
+    end
+
+    for _, auto_venv in ipairs({ true, false }) do
+      notebook.setup({
+        keymaps = false, backend_cmd = { backend }, auto_venv = auto_venv,
+        kernel_name = 'notebook-style-smoke',
+      })
+      local path = project .. "/quote '中文.py"
+      vim.fn.writefile({ 'raise RuntimeError("disk content must not execute")' }, path)
+      buf = vim.api.nvim_create_buf(false, false)
+      vim.api.nvim_buf_set_name(buf, path)
+      vim.api.nvim_set_current_buf(buf)
+      vim.bo[buf].filetype = 'python'
+      local function file_cell()
+        return cells.get_cells(buf, {}, vim.api.nvim_buf_line_count(buf))[1]
+      end
+      local function marks()
+        return vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })
+      end
+      local function text()
+        return table.concat(output_view.format_outputs(state.outputs(buf, file_cell())), '\n')
+      end
+      local function run(lines, command, during)
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        vim.api.nvim_win_set_cursor(0, { #lines, 0 })
+        local next_idle, next_reply = idle + 1, replies + 1
+        vim.cmd(command or 'NotebookStyleRunFile')
+        if during then during() end
+        assert_true(vim.wait(20000, function()
+          return idle >= next_idle and replies >= next_reply and not notebook.pending_updates[buf]
+        end, 10), 'kernel execution did not finish; messages=' .. vim.inspect(messages))
+      end
+
+      run({ 'import math', 'seed = 17', 'seed + 100' }, 'NotebookStyleRunCell')
+      assert_eq(text(), '', 'bare expressions must not echo')
+      assert_eq(#marks(), 0, 'a silent execution must leave no output frame')
+      assert_eq(#messages, 0, 'automatic kernel startup must be quiet')
+      local session = state.get(buf).session_id
+
+      local previous_idle = idle
+      run({
+        'print("first", flush=True)', 'import time; time.sleep(1)',
+        'print(math.sqrt(81) + seed)', '999', '',
+      }, 'NotebookStyleRunFile', function()
+        assert_true(vim.wait(10000, function()
+          return text() == 'first' and #marks() > 0
+        end, 10), 'stdout must render before execution completes')
+        assert_eq(idle, previous_idle, 'streaming should not wait for idle')
+        assert_eq(marks()[1][2], 4, 'streamed output must be below trailing blank lines')
+      end)
+      assert_eq(text(), 'first\n26.0', 'imports and variables must persist across commands')
+      assert_eq(state.get(buf).session_id, session, 'file commands must reuse the existing session')
+
+      run({ 'print("quote: \' / \\\\ 中文")' }, 'NotebookStyleRunCell')
+      assert_eq(text(), "quote: ' / \\ 中文", 'one-line sources must preserve quoting and Unicode')
+      run({ 'from IPython.display import display', 'display("explicit result")' })
+      assert_eq(text(), "'explicit result'", 'explicit display must not be silenced')
+      run({ 'import sys; print("stderr marker", file=sys.stderr)', 'raise ValueError("failure marker")' })
+      local outputs = state.outputs(buf, file_cell())
+      assert_eq(outputs[1].name, 'stderr')
+      assert_eq(outputs[2].output_type, 'error')
+      assert_eq(outputs[2].ename, 'ValueError')
+      assert_eq(outputs[2].evalue, 'failure marker')
+      assert_true(text():find(path, 1, true) ~= nil, 'tracebacks should name the source file')
+
+      run({ 'import matplotlib.pyplot as plt', 'plt.plot([0, 2, 5], [3, 1, 4])' })
+      outputs = state.outputs(buf, file_cell())
+      assert_eq(#outputs, 1, 'plot expression repr should not accompany the image')
+      assert_eq(outputs[1].output_type, 'display_data')
+      assert_true(outputs[1].data['image/png']:match('^iVBOR') ~= nil, 'matplotlib must automatically emit a PNG')
+      assert_eq(#marks(), 1, 'PNG output must use the same EOF output block')
+
+      run({ '' })
+      assert_eq(#state.outputs(buf, file_cell()), 0, 'silent reruns must replace previous plot output')
+      assert_eq(#marks(), 0, 'silent reruns must remove the output frame')
+      run({ 'seed += 1', '' }, 'NotebookStyleRunCellAndMove')
+      assert_eq(vim.api.nvim_win_get_cursor(0)[1], 2, 'whole-file execution must not move the cursor')
+      assert_eq(#messages, 0, 'whole-file run-and-move must not warn about missing cells')
+
+      run({ 'print("interrupt ready", flush=True)', 'time.sleep(30)' }, nil, function()
+        assert_true(vim.wait(10000, function() return text() == 'interrupt ready' end, 10))
+        exec.interrupt_kernel(buf)
+      end)
+      assert_true(text():find('KeyboardInterrupt', 1, true) ~= nil, 'the existing interrupt command should work')
+      exec.stop_kernel(buf)
+      assert_true(vim.wait(5000, function() return not state.get(buf).kernel_started end, 10))
+      notebook.disable(buf)
+      vim.api.nvim_buf_delete(buf, { force = true })
+      buf = nil
+      messages = {}
+    end
+  end)
+
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(exec.stop_kernel, buf)
+    vim.wait(5000, function() return not state.get(buf).kernel_started end, 10)
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  vim.notify, state.apply_event, image.supported = old_notify, old_event, old_supported
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('auto_venv starts a local venv kernel when available', function()
   local backend = backend_path()
   if vim.fn.executable(backend) ~= 1 then
@@ -811,6 +1125,9 @@ test('auto_venv starts a local venv kernel when available', function()
 
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
   local project = vim.fn.tempname()
   local old_notify = vim.notify
   local messages = {}
@@ -820,6 +1137,7 @@ test('auto_venv starts a local venv kernel when available', function()
     vim.notify = old_notify
     if buf and vim.api.nvim_buf_is_valid(buf) then
       pcall(exec.stop_kernel, buf)
+      vim.wait(5000, function() return not state.get(buf).kernel_started end, 10)
       pcall(vim.api.nvim_buf_delete, buf, { force = true })
     end
     vim.fn.delete(project, 'rf')
@@ -862,6 +1180,17 @@ test('auto_venv starts a local venv kernel when available', function()
       end
     end
     assert_true(saw_local_venv, 'kernel did not use local-venv; messages=' .. vim.inspect(messages))
+
+    -- Finish startup and a real explicit-cell execution before tearing down
+    -- the kernel, rather than killing it with the inline setup still queued.
+    local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
+    exec.run_cell(buf)
+    assert_true(vim.wait(20000, function()
+      local outputs = state.outputs(buf, cell)
+      local status = state.status(buf, cell)
+      return (status == 'idle' or status == 'ok') and outputs[1]
+        and outputs[1].text == 'hello from auto_venv\n'
+    end, 10), 'explicit-cell execution should still work')
   end)
 
   cleanup()

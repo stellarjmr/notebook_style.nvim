@@ -138,7 +138,9 @@ end
 local function current_cells(bufnr)
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
   local delimiters = cells.find_delimiters(bufnr, config.options.cell_delimiter)
-  return cells.get_cells(bufnr, delimiters, total_lines)
+  local cell_list = cells.get_cells(bufnr, delimiters, total_lines)
+  state.sync_cells(bufnr, cell_list)
+  return cell_list
 end
 
 local function current_cell_with_index(bufnr)
@@ -161,8 +163,20 @@ local function cell_source(bufnr, cell)
   if not cells.is_valid_cell(cell) then
     return ''
   end
-  local lines = vim.api.nvim_buf_get_lines(bufnr, cell.start_line + 1, cell.end_line + 1, false)
-  return table.concat(lines, '\n')
+  local start_line = cell.implicit and 0 or cell.start_line + 1
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line, cell.end_line + 1, false)
+  local source = table.concat(lines, '\n')
+  if cell.implicit then
+    local path = vim.api.nvim_buf_get_name(bufnr)
+    -- Script compilation suppresses implicit expression results, but keeps
+    -- stdout, display_data and matplotlib's normal post-execution hook.
+    return string.format(
+      'exec(compile(%s, %s, "exec"), globals())',
+      vim.fn.json_encode(source),
+      vim.fn.json_encode(path ~= '' and path or '<notebook_style>')
+    )
+  end
+  return source
 end
 
 local function move_to_cell(bufnr, cell)
@@ -307,7 +321,7 @@ function M.select_kernel(bufnr)
   end)
 end
 
-function M.start_kernel(bufnr, callback)
+function M.start_kernel(bufnr, callback, quiet)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local buffer_state = state.get(bufnr)
 
@@ -344,7 +358,9 @@ function M.start_kernel(bufnr, callback)
 
       buffer_state.kernel_started = true
       local started_kernel_name = start_result and start_result.kernel_name or kernel_name
-      vim.notify("NotebookStyle kernel '" .. tostring(started_kernel_name) .. "' started", vim.log.levels.INFO)
+      if not quiet then
+        vim.notify("NotebookStyle kernel '" .. tostring(started_kernel_name) .. "' started", vim.log.levels.INFO)
+      end
 
       cl:call('execute_silent', {
         session_id = session_id,
@@ -483,7 +499,7 @@ function M.run_cell(bufnr)
   end
 
   if config.options.auto_start_kernel then
-    M.start_kernel(bufnr, execute)
+    M.start_kernel(bufnr, execute, cell.implicit)
   else
     execute()
   end
@@ -521,7 +537,7 @@ function M.run_file(bufnr)
   end
 
   if config.options.auto_start_kernel then
-    M.start_kernel(bufnr, execute_all)
+    M.start_kernel(bufnr, execute_all, runnable[1].implicit)
   else
     execute_all()
   end
@@ -536,6 +552,10 @@ function M.run_cell_and_move(bufnr)
   end
 
   M.run_cell(bufnr)
+
+  if cell.implicit then
+    return
+  end
 
   local next_cell = cell_list[index + 1]
   if next_cell then

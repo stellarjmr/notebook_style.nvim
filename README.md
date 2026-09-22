@@ -171,6 +171,33 @@ reflowed or resized. Non-comment lines inside a Markdown cell are left
 unchanged. Markdown cells are skipped by `:NotebookStyleRunCell` and
 `:NotebookStyleRunFile`.
 
+### Python Files Without Cells
+
+In a Python buffer without cell delimiters, `:NotebookStyleRunCell` and
+`:NotebookStyleRunFile` both execute the entire current buffer, including unsaved
+changes, in the same persistent Jupyter kernel. Imports, variables, kernel
+selection, and `auto_venv` work just as they do for explicit cells. This is not a
+separate `python file.py` process: the existing kernel namespace and environment
+are retained.
+
+The source stays undecorated. Only real output creates an output block at the
+end of the file: stdout/stderr, explicit `display()` calls, errors, and inline
+Matplotlib PNGs use the existing output renderer. Bare expressions such as a
+final `value` or `plt.plot(...)` do not echo their return values. Text is updated
+as the kernel sends it; plots without an explicit `plt.show()` are displayed
+automatically when the file finishes executing.
+
+A run with no output stays silent, even while busy: no empty frame, `Out[*]`,
+`running…` placeholder, or automatic kernel-started notification. Startup
+failures and warnings are still reported. Rerunning replaces the previous
+output, so a silent rerun removes any old text or plots.
+
+`:NotebookStyleOpenOutput` and the clear-output commands apply to the file-level
+output from any cursor position. `:NotebookStyleRunCellAndMove` runs the file
+without moving. Rendering visibility, output line limits, image settings, and
+terminal compatibility remain unchanged. Adding or removing cell delimiters
+clears the previous execution unit's outputs without restarting the kernel.
+
 ### Commands
 
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
@@ -178,11 +205,11 @@ unchanged. Markdown cells are skipped by `:NotebookStyleRunCell` and
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
 - `:NotebookStyleRender` - Show/re-render cells for the current buffer
 - `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off
-- `:NotebookStyleRunCell` - Run the current Python cell and render output inline
+- `:NotebookStyleRunCell` - Run the current Python cell, or the whole Python buffer if it has no cells
 - `:NotebookStyleOpenOutput` - Open the current cell output in a readonly, searchable floating buffer
 - `:NotebookStyleClearOutput` / `:NotebookStyleClearCellOutput` - Clear the current cell's inline output
 - `:NotebookStyleClearAllOutputs` - Clear all inline outputs in the current buffer
-- `:NotebookStyleRunFile` - Run all Python cells in the current buffer
+- `:NotebookStyleRunFile` - Run all Python cells, or the whole Python buffer if it has no cells
 - `:NotebookStyleRunCellAndMove` - Run the current cell and move to the next cell
 - `:NotebookStyleKernelStart` - Start the Python Jupyter kernel for the current buffer
 - `:NotebookStyleKernelStop` - Stop the Python Jupyter kernel for the current buffer
@@ -194,7 +221,7 @@ unchanged. Markdown cells are skipped by `:NotebookStyleRunCell` and
 
 ### Inline Execution Backend
 
-Inline execution is experimental and supports Python buffers with `# %%` cells, including `.py` files and `.ipynb` notebooks opened through Jupytext. On tagged releases, the install hooks above download a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
+Inline execution is experimental and supports Python buffers with or without `# %%` cells, including `.py` files and `.ipynb` notebooks opened through Jupytext. On tagged releases, the install hooks above download a prebuilt `notebook-style-core` backend for supported platforms, so normal users do not need a Rust toolchain.
 
 Supported prebuilt targets:
 - `aarch64-apple-darwin` (Apple Silicon macOS)
@@ -510,6 +537,18 @@ tests/run_all.sh
 ```
 
 This checks Rust formatting, runs `cargo test`, builds the release backend, and runs headless Neovim Lua smoke tests. The Lua suite also exercises `auto_venv` when `python3` can import `ipykernel`; otherwise that integration check is reported as skipped.
+
+With `ipykernel` and `matplotlib` available to `python3`, the suite also verifies
+plain-file execution with both `auto_venv` settings: unsaved source, silent
+expressions, persistent variables, streaming output, errors, automatic PNGs,
+silent reruns, and interruption. Test kernelspecs and environment links live
+only in temporary directories.
+
+For a visual check, open a Python buffer without delimiters, run `value = 17`
+followed by `value`, and confirm no output or code borders appear. Add
+`print(value)` and a Matplotlib plot, rerun, and check the output at EOF. Remove
+those output statements and rerun to check that the old output disappears.
+Also check rendering toggles, normal/visual/insert modes, and a narrow window.
 
 ## Similar Projects
 

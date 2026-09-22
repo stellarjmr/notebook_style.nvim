@@ -371,6 +371,36 @@ local function render_markdown_cell(bufnr, cell)
   end
 end
 
+local function render_output(bufnr, cell, frame_width, cell_number)
+  local outputs = state.outputs(bufnr, cell)
+  local busy = state.status(bufnr, cell) == 'busy'
+  -- Whole files stay completely undecorated until actual output arrives.
+  if cell.implicit and #outputs == 0 then
+    return
+  end
+
+  local chars = get_border_chars()
+  local lines_below = {}
+  if #outputs > 0 or busy then
+    local count_label = busy and '*' or state.execution_count(bufnr, cell) or cell_number
+    local label = 'Out[' .. count_label .. ']'
+    local header = cell.implicit and make_titled_top_border(frame_width, label) or divider_line(frame_width, label)
+    table.insert(lines_below, { { header, 'NotebookCellBorder' } })
+    for _, row in ipairs(build_output_lines(outputs, frame_width)) do
+      table.insert(lines_below, row)
+    end
+    if busy and #outputs == 0 then
+      table.insert(lines_below, with_sides('running…', 'NotebookCellOutput', frame_width))
+    end
+  end
+
+  local bottom_border = make_border_line(frame_width, chars.bottom_left, chars.horizontal, chars.bottom_right)
+  table.insert(lines_below, { { bottom_border, 'NotebookCellBorder' } })
+  vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.end_line, 0, {
+    virt_lines = lines_below,
+  })
+end
+
 --- Render a cell border
 --- @param bufnr number Buffer number
 --- @param cell table Cell with start_line and end_line
@@ -379,6 +409,13 @@ end
 --- @param frame_width number Frame width
 --- @param cell_number number Cell number for display
 function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, cell_number)
+  if cell.implicit then
+    if show_borders then
+      render_output(bufnr, cell, frame_width, cell_number)
+    end
+    return
+  end
+
   local chars = get_border_chars()
 
   -- Build cell label with optional name
@@ -468,30 +505,7 @@ function M.render_cell(bufnr, cell, show_borders, show_delimiter, frame_width, c
     render_markdown_cell(bufnr, cell)
   end
 
-  local lines_below = {}
-  local outputs = state.outputs(bufnr, cell)
-  local busy = state.status(bufnr, cell) == 'busy'
-  if #outputs > 0 or busy then
-    local count_label
-    if busy then
-      count_label = '*'
-    else
-      count_label = state.execution_count(bufnr, cell) or cell_number
-    end
-    table.insert(lines_below, { { divider_line(frame_width, 'Out[' .. count_label .. ']'), 'NotebookCellBorder' } })
-    for _, row in ipairs(build_output_lines(outputs, frame_width)) do
-      table.insert(lines_below, row)
-    end
-    if busy and #outputs == 0 then
-      table.insert(lines_below, with_sides('running…', 'NotebookCellOutput', frame_width))
-    end
-  end
-
-  local bottom_border = make_border_line(frame_width, chars.bottom_left, chars.horizontal, chars.bottom_right)
-  table.insert(lines_below, { { bottom_border, 'NotebookCellBorder' } })
-  vim.api.nvim_buf_set_extmark(bufnr, M.ns, cell.end_line, 0, {
-    virt_lines = lines_below,
-  })
+  render_output(bufnr, cell, frame_width, cell_number)
 end
 
 --- Render all cells in the buffer

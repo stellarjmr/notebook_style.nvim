@@ -118,20 +118,6 @@ local function update_cells(bufnr, winid)
     return
   end
 
-  -- Rendering can be hidden independently of whether the plugin is enabled.
-  if not M.render_visible[bufnr] then
-    render.clear(bufnr)
-    return
-  end
-
-  -- Set window-local conceal options for proper delimiter hiding
-  -- These are window-local, so we set them each time. breakindent keeps the
-  -- repeated left border from covering text on wrapped continuation lines.
-  vim.api.nvim_set_option_value('conceallevel', 2, { scope = 'local', win = winid })
-  vim.api.nvim_set_option_value('concealcursor', 'nc', { scope = 'local', win = winid })
-  vim.api.nvim_set_option_value('breakindent', true, { scope = 'local', win = winid })
-  vim.api.nvim_set_option_value('breakindentopt', 'min:1', { scope = 'local', win = winid })
-
   local total_lines = vim.api.nvim_buf_line_count(bufnr)
   local delimiters = cells.find_delimiters(bufnr, config.options.cell_delimiter)
   local cell_list = cells.get_cells(bufnr, delimiters, total_lines)
@@ -145,6 +131,21 @@ local function update_cells(bufnr, winid)
   if not mode:match('^i') then
     state.sync_cells(bufnr, cell_list)
   end
+
+  -- Rendering can be hidden independently of whether the plugin is enabled.
+  -- Still retire identities above when switching between file and cell mode.
+  if not M.render_visible[bufnr] then
+    render.clear(bufnr)
+    return
+  end
+
+  -- Set window-local conceal options for proper delimiter hiding
+  -- These are window-local, so we set them each time. breakindent keeps the
+  -- repeated left border from covering text on wrapped continuation lines.
+  vim.api.nvim_set_option_value('conceallevel', 2, { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('concealcursor', 'nc', { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('breakindent', true, { scope = 'local', win = winid })
+  vim.api.nvim_set_option_value('breakindentopt', 'min:1', { scope = 'local', win = winid })
 
   render.render_all(bufnr, cell_list, mode, winid)
 end

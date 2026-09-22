@@ -195,6 +195,23 @@ are not executable and are skipped by RunCell and RunFile.
     core/notebook-style-core first. Ghostty/Kitty use the Kitty graphics
     protocol; unsupported terminals show a text placeholder.
 
+    Without cell delimiters in a Python buffer, run the entire current buffer
+    (including unsaved changes) in the same persistent kernel. No borders are
+    added around the source. Real output appears only below the file's last
+    line, using the existing text, error, and image renderer. Bare expressions
+    do not echo their return values; explicit display() still works. Text
+    updates as the kernel sends it, and Matplotlib plots automatically display
+    at the end of execution unless shown earlier with plt.show(). This is
+    kernel execution, not a separate python file.py process.
+
+    A whole-file run without output shows no empty frame, Out[*], running
+    placeholder, or automatic kernel-started notification. Failures and
+    warnings are still reported. Rerunning replaces previous output, including
+    clearing old plots on a silent rerun. Rendering visibility, output limits,
+    and image settings remain unchanged. Switching between implicit whole-file
+    and explicit cell execution clears the previous units' outputs but keeps
+    the kernel namespace.
+
     By default, auto_venv checks for a project-local .venv next to the current
     file or in a parent directory. If .venv/bin/python (or
     .venv/Scripts/python.exe on Windows) can import ipykernel, that Python is
@@ -219,6 +236,8 @@ are not executable and are skipped by RunCell and RunFile.
     selection, yank, and scrolling for long output. This buffer is created only
     when the command is run; normal inline rendering remains virtual and
     lightweight.
+    In Python files without cell delimiters, open the file-level output from
+    any cursor position.
 
                                                 *:NotebookStyleClearOutput*
                                             *:NotebookStyleClearCellOutput*
@@ -226,6 +245,7 @@ are not executable and are skipped by RunCell and RunFile.
 :NotebookStyleClearCellOutput
     Clear the current cell's captured inline output and close any open output
     viewer for the current buffer.
+    Without cell delimiters, clear the file-level output instead.
 
                                             *:NotebookStyleClearAllOutputs*
 :NotebookStyleClearAllOutputs
@@ -235,10 +255,14 @@ are not executable and are skipped by RunCell and RunFile.
                                                     *:NotebookStyleRunFile*
 :NotebookStyleRunFile
     Run every non-empty Python cell in the current buffer.
+    Without cell delimiters in a Python buffer, run the whole buffer with the
+    same behavior as :NotebookStyleRunCell.
 
                                            *:NotebookStyleRunCellAndMove*
 :NotebookStyleRunCellAndMove
     Run the current Python cell and move the cursor to the next cell.
+    Without cell delimiters in a Python buffer, run the whole buffer without
+    moving the cursor.
 
                                                     *:NotebookStyleKernelStart*
 :NotebookStyleKernelStart
@@ -453,6 +477,12 @@ and runs headless Neovim Lua smoke tests. The Lua suite exercises setup,
 delimiter detection, rendering extmarks, and auto_venv when python3 can import
 ipykernel. If ipykernel is unavailable, the auto_venv integration check is
 reported as skipped.
+
+With ipykernel and matplotlib available to python3, the suite also tests
+whole-file execution with auto_venv enabled and disabled: unsaved source,
+silent expressions, persistent variables, streaming stdout/stderr, errors,
+automatic PNG output, silent reruns, and interruption. Its kernelspec and
+project environment links are temporary; no user kernelspec is installed.
 
 ==============================================================================
 7. HIGHLIGHTS                                     *notebook_style-highlights*

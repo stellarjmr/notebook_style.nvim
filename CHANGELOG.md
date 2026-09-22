@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- Run Python buffers without cell delimiters through the existing Jupyter kernel with `RunCell` or `RunFile`. The entire buffer, including unsaved changes, shares the kernel namespace and displays text, errors, and automatic Matplotlib plots at EOF without code borders or implicit expression results. Runs without output stay visually silent; existing output viewing, clearing, and kernel controls also work for whole-file output.
+
 ## [0.10.0] - 2026-08-10
 
 ### Changed

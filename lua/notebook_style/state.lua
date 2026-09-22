@@ -1,6 +1,7 @@
 local M = {}
 
 local buffers = {}
+local next_file_id = 0
 
 -- Namespace holding one invisible extmark per cell delimiter line. The
 -- extmark id is the stable cell identity: extmarks move with text edits, so
@@ -37,6 +38,10 @@ function M.get(bufnr)
 end
 
 function M.clear(bufnr)
+  local state = buffers[bufnr]
+  if state and state.file_cell_id and on_outputs_dropped then
+    pcall(on_outputs_dropped, state.outputs[state.file_cell_id] or {})
+  end
   buffers[bufnr] = nil
   if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
     pcall(vim.api.nvim_buf_clear_namespace, bufnr, identity_ns, 0, -1)
@@ -47,19 +52,22 @@ local function to_cell_id(bufnr, mark_id)
   return string.format('cell-%d-%d', bufnr, mark_id)
 end
 
---- Delete an identity mark together with the state it owns.
-local function drop_mark(bufnr, state, mark_id)
-  pcall(vim.api.nvim_buf_del_extmark, bufnr, identity_ns, mark_id)
-  local cell_id = to_cell_id(bufnr, mark_id)
+local function drop_cell(state, cell_id)
   local outputs = state.outputs[cell_id]
   state.outputs[cell_id] = nil
   state.execution_counts[cell_id] = nil
   state.statuses[cell_id] = nil
-  state.mark_delimiters[mark_id] = nil
   state.active_cells[cell_id] = nil
   if outputs and #outputs > 0 and on_outputs_dropped then
     pcall(on_outputs_dropped, outputs)
   end
+end
+
+--- Delete an identity mark together with the state it owns.
+local function drop_mark(bufnr, state, mark_id)
+  pcall(vim.api.nvim_buf_del_extmark, bufnr, identity_ns, mark_id)
+  state.mark_delimiters[mark_id] = nil
+  drop_cell(state, to_cell_id(bufnr, mark_id))
 end
 
 --- Resolve a stable identity for a cell, anchored to an extmark on its
@@ -74,6 +82,17 @@ end
 function M.cell_id(bufnr, cell)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local state = M.get(bufnr)
+
+  if cell.implicit then
+    -- A file has no delimiter to anchor to. Allocate a fresh identity after
+    -- mode switches so late events from a previous whole-file run stay dead.
+    if not state.file_cell_id then
+      next_file_id = next_file_id + 1
+      state.file_cell_id = string.format('file-%d-%d', bufnr, next_file_id)
+    end
+    state.active_cells[state.file_cell_id] = true
+    return state.file_cell_id
+  end
 
   local row = cell.delimiter or cell.start_line or 0
   local last_row = math.max(vim.api.nvim_buf_line_count(bufnr) - 1, 0)
@@ -136,8 +155,18 @@ function M.sync_cells(bufnr, cell_list)
   end
 
   local anchors = {}
+  local has_file = false
   for _, cell in ipairs(cell_list or {}) do
-    anchors[cell.delimiter or cell.start_line or 0] = true
+    if cell.implicit then
+      has_file = true
+    else
+      anchors[cell.delimiter or cell.start_line or 0] = true
+    end
+  end
+
+  if state.file_cell_id and not has_file then
+    drop_cell(state, state.file_cell_id)
+    state.file_cell_id = nil
   end
 
   for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(bufnr, identity_ns, 0, -1, {})) do
@@ -207,6 +236,9 @@ function M.apply_event(bufnr, cell_id, event)
   local kind = event.kind
 
   if kind == 'execute_input' then
+    if cell_id == state.file_cell_id and on_outputs_dropped then
+      pcall(on_outputs_dropped, state.outputs[cell_id] or {})
+    end
     state.outputs[cell_id] = {}
     state.execution_counts[cell_id] = event.execution_count
     state.statuses[cell_id] = 'busy'
