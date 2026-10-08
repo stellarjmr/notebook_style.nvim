@@ -473,10 +473,11 @@ From the repository root, run: >sh
 <
 
 The script checks Rust formatting, runs cargo test, builds the release backend,
-and runs headless Neovim Lua smoke tests. The Lua suite exercises setup,
-delimiter detection, rendering extmarks, and auto_venv when python3 can import
-ipykernel. If ipykernel is unavailable, the auto_venv integration check is
-reported as skipped.
+and runs headless Neovim Lua smoke tests. It exits non-zero if any check or Lua
+test fails, and needs Neovim 0.9 or newer because it runs the Lua suite with
+`nvim -l`. The Lua suite exercises setup, delimiter detection, rendering
+extmarks, and auto_venv when python3 can import ipykernel. If ipykernel is
+unavailable, the auto_venv integration check is reported as skipped.
 
 With ipykernel and matplotlib available to python3, the suite also tests
 whole-file execution with auto_venv enabled and disabled: unsaved source,

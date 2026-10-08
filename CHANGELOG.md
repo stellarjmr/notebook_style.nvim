@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
-- `tests/run_all.sh` now fails when a Lua smoke test fails or the Lua suite raises an error. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner now needs Neovim 0.9 or newer (`nvim -l`).
+- `tests/run_all.sh` now fails when a Lua smoke test fails, the Lua suite raises an error (including in asynchronous callbacks), or the suite exits before reporting its results. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner now needs Neovim 0.9 or newer (`nvim -l`).
 
 ## [0.11.0] - 2026-09-22
 

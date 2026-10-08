@@ -24,8 +24,31 @@ local function skip_now(reason)
   error({ skip = true, reason = reason }, 0)
 end
 
+-- An error raised in an asynchronous callback (vim.schedule, libuv) does not
+-- reach the test's pcall; Neovim only prints it and records it in v:errmsg.
+-- The harness checks v:errmsg after every test so such errors fail the run.
+local function take_async_error()
+  local message = vim.v.errmsg
+  if message == '' then
+    return nil
+  end
+  vim.v.errmsg = ''
+  return message
+end
+vim.v.errmsg = ''
+
 local function test(name, fn)
   local ok, err = pcall(fn)
+  local async_error = take_async_error()
+  if async_error then
+    local detail = 'unhandled error in an asynchronous callback: ' .. async_error
+    if ok or (type(err) == 'table' and err.skip) then
+      ok, err = false, detail
+    else
+      err = tostring(err) .. '\n' .. detail
+    end
+  end
+
   if ok then
     passed = passed + 1
     print('[PASS] ' .. name)
@@ -75,6 +98,28 @@ local function highlight_fg(name)
   end
   return string.format('#%06x', hl.fg)
 end
+
+test('errors raised in asynchronous callbacks are detected', function()
+  -- Guards the v:errmsg check in test(): if Neovim stops recording callback
+  -- errors there, async failures would pass silently again.
+  vim.schedule(function()
+    error('expected error: vim.schedule detection canary')
+  end)
+  vim.wait(50)
+  local message = take_async_error()
+  assert_true(message and message:find('vim.schedule detection canary', 1, true) ~= nil,
+    'a vim.schedule callback error was not recorded: ' .. vim.inspect(message))
+
+  local timer = vim.uv.new_timer()
+  timer:start(0, 0, function()
+    timer:close()
+    error('expected error: libuv detection canary')
+  end)
+  vim.wait(50)
+  message = take_async_error()
+  assert_true(message and message:find('libuv detection canary', 1, true) ~= nil,
+    'a libuv callback error was not recorded: ' .. vim.inspect(message))
+end)
 
 test('setup registers commands and defaults', function()
   local notebook = require('notebook_style')
@@ -1199,6 +1244,16 @@ test('auto_venv starts a local venv kernel when available', function()
   end
 end)
 
+-- Let callbacks still pending from the last test run; they can raise too.
+vim.wait(50)
+local trailing_error = take_async_error()
+if trailing_error then
+  local failure = 'after the last test: unhandled error in an asynchronous callback: ' .. trailing_error
+  table.insert(failures, failure)
+  print('[FAIL] ' .. failure)
+end
+
+-- tests/run_all.sh requires this summary to be the last line of output.
 print(string.format('notebook_style Lua smoke tests: %d passed, %d skipped, %d failed', passed, skipped, #failures))
 
 if #failures > 0 then

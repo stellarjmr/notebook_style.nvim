@@ -12,9 +12,11 @@ run() {
   "$@"
 }
 
-# Run a Lua file in headless Neovim. `nvim -l` (Neovim 0.9+) exits non-zero on
-# any Lua error, including the error lua_smoke.lua raises when a test fails.
-# `-c "luafile ..." -c 'qa!'` must not be used: it exits 0 after a Lua error.
+# Run a Lua file in headless Neovim. `nvim -l` (Neovim 0.9+) exits non-zero
+# when the script itself raises, including the error lua_smoke.lua raises when
+# a test fails; `-c "luafile ..." -c 'qa!'` would exit 0. Errors raised in
+# asynchronous callbacks do not change the exit status: lua_smoke.lua checks
+# for those itself, and the summary check below covers the rest.
 run_lua() {
   nvim --headless -u NONE -l "$@"
 }
@@ -23,10 +25,12 @@ run cargo fmt --manifest-path core/Cargo.toml -- --check
 run cargo test --manifest-path core/Cargo.toml
 run cargo build --release --manifest-path core/Cargo.toml
 
+selfcheck="$(mktemp)"
+log="$(mktemp)"
+trap 'rm -f "$selfcheck" "$log"' EXIT
+
 echo
 echo "==> check that a failing Lua file fails the run"
-selfcheck="$(mktemp)"
-trap 'rm -f "$selfcheck"' EXIT
 echo "error('expected failure')" >"$selfcheck"
 if run_lua "$selfcheck" >/dev/null 2>&1; then
   echo "run_lua exited 0 for a failing Lua file; Lua test failures would go unnoticed" >&2
@@ -37,4 +41,12 @@ echo
 echo "==> nvim --headless -u NONE -l tests/lua_smoke.lua"
 NOTEBOOK_STYLE_TEST_ROOT="$ROOT" \
 NOTEBOOK_STYLE_TEST_BACKEND="$BACKEND" \
-  run_lua "$ROOT/tests/lua_smoke.lua"
+  run_lua "$ROOT/tests/lua_smoke.lua" 2>&1 | tee "$log"
+
+# The suite prints its summary as its very last step. Without it the suite
+# stopped early (e.g. a stray :qa!); output after it is an error raised while
+# Neovim exited. Either way exit status 0 proves nothing.
+if ! tail -n 1 "$log" | grep -q '^notebook_style Lua smoke tests: [0-9]* passed, [0-9]* skipped, 0 failed$'; then
+  echo "tests/lua_smoke.lua did not finish cleanly: its summary must be the last line of output" >&2
+  exit 1
+fi
