@@ -113,6 +113,15 @@ local function on_backend_exit(exited_client, code, signal)
   )
 end
 
+--- Report a failed backend request, except when the backend itself is gone:
+--- on_backend_exit reports that once for every request in flight.
+local function notify_failure(message, err)
+  if rpc.is_backend_gone(err) then
+    return
+  end
+  vim.notify(message .. tostring(err), vim.log.levels.ERROR)
+end
+
 local function ensure_client()
   if client and client.job then
     return client
@@ -233,24 +242,33 @@ local function execute_cell(bufnr, cell, callback)
   local buffer_state = state.get(bufnr)
   local cell_id = state.cell_id(bufnr, cell)
   local source = cell_source(bufnr, cell)
+  local cl = ensure_client()
 
-  ensure_client():call('update_cell_source', {
+  -- Replies from a backend that has exited meanwhile are ignored throughout:
+  -- on_backend_exit has already reset the buffer and told the user.
+  cl:call('update_cell_source', {
     session_id = buffer_state.session_id,
     cell_id = cell_id,
     source = source,
   }, function(err)
+    if cl ~= client then
+      return
+    end
     if err then
-      vim.notify('NotebookStyle update_cell_source failed: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle update_cell_source failed: ', err)
       if callback then callback(err) end
       return
     end
 
-    ensure_client():call('execute', {
+    cl:call('execute', {
       session_id = buffer_state.session_id,
       cell_id = cell_id,
     }, function(exec_err)
+      if cl ~= client then
+        return
+      end
       if exec_err then
-        vim.notify('NotebookStyle execute failed: ' .. tostring(exec_err), vim.log.levels.ERROR)
+        notify_failure('NotebookStyle execute failed: ', exec_err)
       end
       if callback then callback(exec_err) end
     end)
@@ -280,7 +298,7 @@ local function sync_clear_with_backend(method, params)
 
   client:call(method, params, function(err)
     if err then
-      vim.notify('NotebookStyle ' .. method .. ' failed: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle ' .. method .. ' failed: ', err)
     end
   end)
 end
@@ -299,7 +317,7 @@ end
 function M.list_kernels(callback)
   ensure_client():call('list_kernels', {}, function(err, result)
     if err then
-      vim.notify('NotebookStyle list_kernels failed: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle list_kernels failed: ', err)
       if callback then callback(err) end
       return
     end
@@ -381,8 +399,11 @@ function M.start_kernel(bufnr, callback, quiet)
       python_path = python_path,
       cwd = cwd,
     }, function(start_err, start_result)
+      if cl ~= client then
+        return
+      end
       if start_err then
-        vim.notify('NotebookStyle start_kernel failed: ' .. tostring(start_err), vim.log.levels.ERROR)
+        notify_failure('NotebookStyle start_kernel failed: ', start_err)
         return
       end
 
@@ -409,8 +430,11 @@ function M.start_kernel(bufnr, callback, quiet)
   end
 
   cl:call('open_py', { path = path ~= '' and path or (cwd .. '/untitled.py') }, function(err, result)
+    if cl ~= client then
+      return
+    end
     if err then
-      vim.notify('NotebookStyle open_py failed: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle open_py failed: ', err)
       return
     end
 
@@ -467,7 +491,15 @@ function M.stop_kernel(bufnr)
     return
   end
 
-  ensure_client():call('stop_kernel', { session_id = buffer_state.session_id }, function()
+  local cl = ensure_client()
+  cl:call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
+    if cl ~= client then
+      return
+    end
+    if err then
+      notify_failure('NotebookStyle stop_kernel failed: ', err)
+      return
+    end
     buffer_state.kernel_started = false
     state.clear_statuses(bufnr)
     vim.notify('NotebookStyle kernel stopped', vim.log.levels.INFO)
@@ -483,9 +515,13 @@ function M.interrupt_kernel(bufnr)
     return
   end
 
-  ensure_client():call('interrupt_kernel', { session_id = buffer_state.session_id }, function(err)
+  local cl = ensure_client()
+  cl:call('interrupt_kernel', { session_id = buffer_state.session_id }, function(err)
+    if cl ~= client then
+      return
+    end
     if err then
-      vim.notify('NotebookStyle interrupt_kernel failed: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle interrupt_kernel failed: ', err)
       return
     end
     vim.notify('NotebookStyle kernel interrupted', vim.log.levels.INFO)
@@ -500,9 +536,13 @@ function M.restart_kernel(bufnr)
     return
   end
 
-  ensure_client():call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
+  local cl = ensure_client()
+  cl:call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
+    if cl ~= client then
+      return
+    end
     if err then
-      vim.notify('NotebookStyle restart failed to stop kernel: ' .. tostring(err), vim.log.levels.ERROR)
+      notify_failure('NotebookStyle restart failed to stop kernel: ', err)
       return
     end
     buffer_state.kernel_started = false

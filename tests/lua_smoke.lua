@@ -182,14 +182,18 @@ local function fake_backend()
   end
 
   -- Like rpc.lua when the process exits: outstanding requests fail, then the
-  -- client's on_exit handler runs.
-  function fake.exit(code, signal)
+  -- client's on_exit handler runs. With { replies_after_exit = true } the
+  -- outstanding requests stay open instead, so a test can deliver replies that
+  -- were read only after the exit had been handled.
+  function fake.exit(code, signal, opts)
     local client = fake.client
     client.exited = true
-    for _, call in ipairs(fake.calls) do
-      if call.client == client and not call.answered then
-        call.answered = true
-        call.cb('notebook-style-core exited', nil)
+    if not (opts and opts.replies_after_exit) then
+      for _, call in ipairs(fake.calls) do
+        if call.client == client and not call.answered then
+          call.answered = true
+          call.cb('notebook-style-core exited', nil)
+        end
       end
     end
     client.opts.on_exit(code, signal)
@@ -1176,6 +1180,8 @@ test('rpc client delivers responses sent before exit and fails the rest', functi
   assert_eq(results[1].result, 'pong')
   assert_eq(results[2].err, 'notebook-style-core exited')
 
+  assert_true(client.handle:is_closing(), 'the process handle must be closed after the exit')
+
   local late
   client:call('after_exit', {}, function(err)
     late = err
@@ -1239,6 +1245,75 @@ test('backend exit resets buffer sessions and the next run opens a new one', fun
     fake.reply('execute_silent', nil, {})
     fake.reply('update_cell_source', nil, { ok = true })
     assert_eq(fake.reply('execute', nil, { msg_id = 'm2' }).params.session_id, 'new-session')
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('a backend exit with requests in flight notifies once and ignores late replies', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    local function only_exit_notification(context)
+      assert_eq(#messages, 1, context .. ': ' .. vim.inspect(messages))
+      assert_true(messages[1]:find('execution backend exited', 1, true) ~= nil, messages[1])
+      messages = {}
+    end
+
+    -- The backend dies while start_kernel is in flight.
+    exec.run_cell(buf)
+    fake.reply('open_py', nil, { session_id = 's1' })
+    messages = {}
+    fake.exit(nil, 9)
+    only_exit_notification('exit during start_kernel')
+
+    -- The backend dies while stop_kernel is in flight: no "kernel stopped".
+    exec.start_kernel(buf)
+    fake.reply('open_py', nil, { session_id = 's2' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    exec.stop_kernel(buf)
+    messages = {}
+    fake.exit(nil, 9)
+    only_exit_notification('exit during stop_kernel')
+
+    -- Replies the backend wrote just before dying can be read after the exit
+    -- was handled. They must not attach the buffer to the dead session.
+    exec.run_cell(buf)
+    local dead_client = fake.client
+    fake.exit(nil, 9, { replies_after_exit = true })
+    only_exit_notification('exit before the open_py reply was read')
+    fake.reply('open_py', nil, { session_id = 'dead' })
+    assert_eq(state.get(buf).session_id, nil, 'a late open_py reply must be ignored')
+    dead_client.handlers.cell_event({ session_id = 'dead', cell_id = 'x', event = { kind = 'stream', name = 'stdout', text = 'late' } })
+    exec.run_cell(buf)
+    assert_eq(fake.calls[#fake.calls].method, 'open_py', 'the next run must open a new session')
+
+    fake.reply('open_py', nil, { session_id = 's4' })
+    fake.exit(nil, 9, { replies_after_exit = true })
+    only_exit_notification('exit before the start_kernel reply was read')
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(state.get(buf).kernel_started, false, 'a late start_kernel reply must be ignored')
+    assert_eq(#messages, 0, 'a late reply must not announce a started kernel: ' .. vim.inspect(messages))
+    assert_eq(fake.count('execute_silent'), 1, 'no setup request for the dead backend')
   end)
 
   fake.restore()

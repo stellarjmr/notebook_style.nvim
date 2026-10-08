@@ -8,6 +8,16 @@ local M = {}
 local Client = {}
 Client.__index = Client
 
+-- Errors passed to callbacks when the backend process is gone. Whoever owns
+-- the client reports the exit once (on_exit), so request handlers can skip
+-- their own notifications for these.
+local EXITED = 'notebook-style-core exited'
+local NOT_RUNNING = 'notebook-style-core is not running'
+
+function M.is_backend_gone(err)
+  return err == EXITED or err == NOT_RUNNING
+end
+
 local function warn(msg)
   vim.schedule(function()
     vim.notify('notebook-style-core: ' .. msg, vim.log.levels.WARN)
@@ -75,9 +85,10 @@ function M.spawn(opts)
         stderr:close()
       end
     end)
+    -- `handle` itself is not in scope yet inside its own initializer.
     pcall(function()
-      if handle and not handle:is_closing() then
-        handle:close()
+      if c.handle and not c.handle:is_closing() then
+        c.handle:close()
       end
     end)
     -- Responses written just before the exit may still be in the stdout pipe:
@@ -153,7 +164,7 @@ function Client:_close()
   table.sort(ids)
   for _, id in ipairs(ids) do
     vim.schedule(function()
-      pending[id]('notebook-style-core exited', nil)
+      pending[id](EXITED, nil)
     end)
   end
 end
@@ -235,7 +246,7 @@ function Client:call(method, params, cb)
   cb = cb or function() end
   if self.exited or self.closed then
     vim.schedule(function()
-      cb('notebook-style-core is not running', nil)
+      cb(NOT_RUNNING, nil)
     end)
     return
   end
