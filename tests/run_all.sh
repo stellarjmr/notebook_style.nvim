@@ -43,9 +43,10 @@ NOTEBOOK_STYLE_TEST_ROOT="$ROOT" \
 NOTEBOOK_STYLE_TEST_BACKEND="$BACKEND" \
   run_lua "$ROOT/tests/lua_smoke.lua" 2>&1 | tee "$log"
 
-# The suite prints its summary as its very last step. Without it the suite
-# stopped early (e.g. a stray :qa!); output after it is an error raised while
-# Neovim exited. Either way exit status 0 proves nothing.
+# The suite prints its summary as its very last step, and the run passes only
+# if that summary is the last line of output. A missing summary means the suite
+# stopped early (e.g. a stray :qa!); any output after it, such as a message or
+# an error printed while Neovim exits, fails the run as well.
 if ! tail -n 1 "$log" | grep -q '^notebook_style Lua smoke tests: [0-9]* passed, [0-9]* skipped, 0 failed$'; then
   echo "tests/lua_smoke.lua did not finish cleanly: its summary must be the last line of output" >&2
   exit 1
