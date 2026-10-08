@@ -201,7 +201,7 @@ clears the previous execution unit's outputs without restarting the kernel.
 ### Commands
 
 - `:NotebookStyleEnable` - Enable the plugin for current buffer
-- `:NotebookStyleDisable` - Disable the plugin for current buffer
+- `:NotebookStyleDisable` - Disable the plugin for current buffer and shut down its kernel (deleting the buffer does the same)
 - `:NotebookStyleToggle` - Toggle the plugin for current buffer
 - `:NotebookStyleRender` - Show/re-render cells for the current buffer
 - `:NotebookStyleToggleRender` - Toggle cell rendering visibility on/off

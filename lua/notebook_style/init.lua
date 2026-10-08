@@ -250,6 +250,8 @@ function M.disable(bufnr)
   M.pending_updates[bufnr] = nil
   clear_keymaps(bufnr)
   output_view.close(bufnr)
+  -- The buffer's state is dropped below, so its kernel would be unreachable.
+  exec.shutdown(bufnr)
   state.clear(bufnr)
   render.clear(bufnr)
 

@@ -447,6 +447,14 @@ function M.select_kernel(bufnr)
   end)
 end
 
+--- Ask the backend to drop a session and kill its kernel. Errors are ignored:
+--- the session is being discarded either way.
+local function close_session(cl, session_id)
+  if session_id then
+    cl:call('close', { session_id = session_id }, function() end)
+  end
+end
+
 --- Complete the buffer's in-flight kernel start: on success run the callbacks
 --- that waited for it and send the queued runs; on failure drop them.
 local function finish_start(bufnr, buffer_state, start, ok)
@@ -503,24 +511,29 @@ function M.start_kernel(bufnr, callback, quiet)
   buffer_state.starting = start
 
   local function start_session(session_id)
+    start.launching = true
     cl:call('start_kernel', {
       session_id = session_id,
       kernel_name = kernel_name,
       python_path = python_path,
       cwd = cwd,
     }, function(start_err, start_result)
+      start.launching = false
       if cl ~= client then
         -- The backend exited meanwhile: end this start quietly so the buffer
         -- does not wait for it (a no-op if the exit already reset the buffer).
         finish_start(bufnr, buffer_state, start, false)
         return
       end
+      if buffer_state.starting ~= start then
+        -- The buffer was shut down meanwhile; nobody can reach this session any
+        -- more, so release it and its kernel.
+        close_session(cl, session_id)
+        return
+      end
       if start_err then
         notify_failure('NotebookStyle start_kernel failed: ', start_err)
         finish_start(bufnr, buffer_state, start, false)
-        return
-      end
-      if buffer_state.starting ~= start then
         return
       end
 
@@ -558,6 +571,7 @@ function M.start_kernel(bufnr, callback, quiet)
       return
     end
     if buffer_state.starting ~= start then
+      close_session(cl, result.session_id)
       return
     end
 
@@ -566,6 +580,29 @@ function M.start_kernel(bufnr, callback, quiet)
 
     start_session(result.session_id)
   end)
+end
+
+--- Release the buffer's backend session and kernel before its state is
+--- discarded (buffer deleted, or the plugin disabled for it): nothing could
+--- reach that kernel afterwards.
+function M.shutdown(bufnr)
+  local buffer_state = state.get(bufnr)
+  local session_id = buffer_state.session_id
+  local start = buffer_state.starting
+  buffer_state.starting = nil
+  buffer_state.run_queue = nil
+  buffer_state.session_id = nil
+  buffer_state.kernel_started = false
+  if not session_id then
+    return -- an open_py in flight closes its session when it completes
+  end
+
+  session_to_buf[session_id] = nil
+  -- A kernel launch in flight closes the session when it completes; closing
+  -- now could let the launch install its kernel into the dropped session.
+  if not (start and start.launching) and client and client.job then
+    close_session(client, session_id)
+  end
 end
 
 function M.clear_cell_output(bufnr)

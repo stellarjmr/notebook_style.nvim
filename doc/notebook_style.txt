@@ -171,11 +171,13 @@ are not executable and are skipped by RunCell and RunFile.
 
                                                     *:NotebookStyleDisable*
 :NotebookStyleDisable
-    Disable the plugin for the current buffer.
+    Disable the plugin for the current buffer and shut down its kernel, if
+    any. Deleting the buffer does the same.
 
                                                     *:NotebookStyleToggle*
 :NotebookStyleToggle
-    Toggle the plugin for the current buffer.
+    Toggle the plugin for the current buffer. Toggling it off shuts down the
+    buffer's kernel, like |:NotebookStyleDisable|.
 
                                                     *:NotebookStyleRender*
 :NotebookStyleRender
