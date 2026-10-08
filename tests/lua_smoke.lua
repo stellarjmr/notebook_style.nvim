@@ -1199,10 +1199,12 @@ test('auto_venv starts a local venv kernel when available', function()
 
   local ok, err = pcall(function()
     assert_eq(vim.fn.mkdir(project .. '/.venv/bin', 'p'), 1, 'failed to create temporary .venv')
-    local symlink_ok, symlink_err = pcall(vim.loop.fs_symlink, python, project .. '/.venv/bin/python')
-    if not symlink_ok then
-      skip_now('could not create python symlink: ' .. tostring(symlink_err))
-    end
+    -- A wrapper, not a symlink: a symlinked venv interpreter no longer finds
+    -- its pyvenv.cfg and loses the environment's packages (ipykernel), so a
+    -- symlink only works when python3 is not itself from a virtualenv.
+    local venv_python = project .. '/.venv/bin/python'
+    vim.fn.writefile({ '#!/bin/sh', 'exec ' .. vim.fn.shellescape(python) .. ' "$@"' }, venv_python)
+    assert_eq(vim.fn.setfperm(venv_python, 'rwxr-xr-x'), 1, 'failed to make the temporary .venv python executable')
     vim.fn.writefile({ '# %%', "print('hello from auto_venv')" }, project .. '/sample.py')
 
     vim.notify = function(message)
