@@ -1768,6 +1768,65 @@ test('runs are dropped when the backend cannot be spawned', function()
   if not ok then error(err, 0) end
 end)
 
+test('a kernel that fails to start is reported instead of hanging', function()
+  local backend = backend_path()
+  if vim.fn.executable(backend) ~= 1 then
+    skip_now('backend binary not executable: ' .. backend)
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local buf
+
+  local ok, err = pcall(function()
+    -- A "kernel" that dies at once, like a kernelspec whose python lacks ipykernel.
+    assert_eq(vim.fn.mkdir(project .. '/kernels/broken', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { 'sh', '-c', 'echo "kernel-start-marker: No module named ipykernel_launcher" >&2; exit 3' },
+      display_name = 'Broken kernel', language = 'python',
+    }) }, project .. '/kernels/broken/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'broken' })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print(1)' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+    local function failures()
+      return vim.tbl_filter(function(message)
+        return message:find('start_kernel failed', 1, true) ~= nil
+      end, messages)
+    end
+    exec.run_cell(buf)
+    assert_true(vim.wait(10000, function() return #failures() == 1 end, 10), 'the failed start was not reported: ' .. vim.inspect(messages))
+    local failure = failures()[1]
+    assert_true(failure:find('exited during startup', 1, true) ~= nil, failure)
+    assert_true(failure:find('kernel-start-marker: No module named ipykernel_launcher', 1, true) ~= nil, 'the kernel stderr must be shown: ' .. failure)
+    assert_eq(state.get(buf).kernel_started, false)
+
+    exec.run_cell(buf)
+    assert_true(vim.wait(10000, function() return #failures() == 2 end, 10), 'a later run must try again: ' .. vim.inspect(messages))
+  end)
+
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  close_backends()
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('rapid runs reach a real kernel once each and in order', function()
   local backend = backend_path()
   local python = vim.fn.exepath('python3')

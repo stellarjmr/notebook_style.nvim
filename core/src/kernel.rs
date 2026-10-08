@@ -8,9 +8,11 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
@@ -18,6 +20,15 @@ use zeromq::{DealerSocket, Socket, SocketRecv, SocketSend, SubSocket, ZmqMessage
 
 use crate::kernelspec::KernelSpec;
 use crate::protocol::{self, Message};
+
+/// How long a kernel may take to open its ports before its start is abandoned.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Trailing stderr lines kept to explain a kernel that fails to start.
+const STDERR_TAIL_LINES: usize = 20;
+/// Longer kernel output lines are truncated when logged.
+const MAX_LINE_BYTES: usize = 4096;
+
+type OutputTail = Arc<parking_lot::Mutex<VecDeque<String>>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfo {
@@ -153,6 +164,14 @@ pub struct Kernel {
 
 impl Kernel {
     pub async fn launch(spec: KernelSpec, cwd: Option<PathBuf>) -> Result<Self> {
+        Self::launch_with_timeout(spec, cwd, STARTUP_TIMEOUT).await
+    }
+
+    async fn launch_with_timeout(
+        spec: KernelSpec,
+        cwd: Option<PathBuf>,
+        startup_timeout: Duration,
+    ) -> Result<Self> {
         let conn = ConnectionInfo::new_localhost(&spec.name)?;
         let conn_path = write_connection_file(&conn)?;
         tracing::info!(?conn_path, kernel = %spec.name, "launching kernel");
@@ -183,13 +202,56 @@ impl Kernel {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .with_context(|| format!("spawning {:?}", argv))?;
         let session = Uuid::new_v4().to_string();
 
-        // Connect sockets — wait briefly for kernel to bind
-        let (shell, control, iopub) = connect_sockets(&conn).await?;
+        // Nothing else reads the kernel's stdout/stderr: drain them so a chatty
+        // kernel cannot block on a full pipe, and keep the end of stderr to
+        // explain a failed start.
+        let stderr_tail = OutputTail::default();
+        if let Some(stdout) = child.stdout.take() {
+            tokio::spawn(drain_output(stdout, spec.name.clone(), "stdout", None));
+        }
+        let stderr_drained = child.stderr.take().map(|stderr| {
+            tokio::spawn(drain_output(
+                stderr,
+                spec.name.clone(),
+                "stderr",
+                Some(stderr_tail.clone()),
+            ))
+        });
+
+        // zeromq's connect() retries refused connections forever, so a kernel
+        // that dies or never binds its ports would hang here. Race the
+        // connection against the kernel exiting and a deadline; on failure the
+        // child is dropped, which kills it (kill_on_drop).
+        let (shell, control, iopub) = tokio::select! {
+            sockets = connect_sockets(&conn) => sockets?,
+            status = child.wait() => {
+                if let Some(drained) = stderr_drained {
+                    // The pipe closes with the process; wait for its last lines.
+                    let _ = tokio::time::timeout(Duration::from_secs(1), drained).await;
+                }
+                let status = match status {
+                    Ok(status) => status.to_string(),
+                    Err(e) => e.to_string(),
+                };
+                return Err(anyhow!(
+                    "kernel '{}' exited during startup ({status}){}",
+                    spec.name,
+                    format_tail(&stderr_tail)
+                ));
+            }
+            _ = tokio::time::sleep(startup_timeout) => {
+                return Err(anyhow!(
+                    "kernel '{}' did not open its ports within {startup_timeout:?}{}",
+                    spec.name,
+                    format_tail(&stderr_tail)
+                ));
+            }
+        };
 
         let (tx, rx) = mpsc::unbounded_channel::<KernelEvent>();
         let tx_iopub = tx.clone();
@@ -377,6 +439,58 @@ impl Kernel {
         let _ = child.wait().await;
         Ok(())
     }
+}
+
+/// Log a kernel output pipe line by line until it closes. With `tail`, also
+/// keep its last lines for error messages.
+async fn drain_output(
+    mut pipe: impl AsyncRead + Unpin,
+    kernel: String,
+    stream: &'static str,
+    tail: Option<OutputTail>,
+) {
+    let emit = |line: &[u8]| {
+        let text = String::from_utf8_lossy(line)
+            .trim_end_matches('\r')
+            .to_string();
+        tracing::info!(kernel = %kernel, stream, "{text}");
+        if let Some(tail) = &tail {
+            let mut tail = tail.lock();
+            if tail.len() == STDERR_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(text);
+        }
+    };
+
+    let mut buf = [0u8; 8192];
+    let mut line = Vec::new();
+    loop {
+        let n = match pipe.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &byte in &buf[..n] {
+            if byte == b'\n' {
+                emit(&line);
+                line.clear();
+            } else if line.len() < MAX_LINE_BYTES {
+                line.push(byte);
+            }
+        }
+    }
+    if !line.is_empty() {
+        emit(&line);
+    }
+}
+
+fn format_tail(tail: &OutputTail) -> String {
+    let lines = tail.lock();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    format!("; stderr:\n{}", lines.join("\n"))
 }
 
 fn write_connection_file(conn: &ConnectionInfo) -> Result<PathBuf> {
@@ -661,4 +775,65 @@ fn frames_to_zmq(frames: Vec<Bytes>) -> ZmqMessage {
 
 fn zmq_to_frames(zmsg: ZmqMessage) -> Vec<Bytes> {
     zmsg.into_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn spec(argv: &[&str]) -> KernelSpec {
+        KernelSpec {
+            name: "test-kernel".to_string(),
+            path: std::env::temp_dir(),
+            argv: argv.iter().map(|arg| arg.to_string()).collect(),
+            display_name: "Test kernel".to_string(),
+            language: "python".to_string(),
+            interrupt_mode: None,
+            env: HashMap::new(),
+            metadata: Value::Null,
+        }
+    }
+
+    /// Launch with a bound, so a regression shows up as a failure, not a hang.
+    async fn launch_error(spec: KernelSpec, startup_timeout: Duration) -> String {
+        let launched = tokio::time::timeout(
+            Duration::from_secs(10),
+            Kernel::launch_with_timeout(spec, None, startup_timeout),
+        )
+        .await
+        .expect("kernel launch must not hang");
+        match launched {
+            Ok(_) => panic!("the kernel must not start"),
+            Err(e) => format!("{e:#}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn launch_reports_a_kernel_that_exits_during_startup() {
+        let message = launch_error(
+            spec(&[
+                "sh",
+                "-c",
+                "echo 'No module named ipykernel_launcher' >&2; exit 3",
+            ]),
+            STARTUP_TIMEOUT,
+        )
+        .await;
+        assert!(message.contains("exited during startup"), "{message}");
+        assert!(message.contains("exit status: 3"), "{message}");
+        assert!(
+            message.contains("No module named ipykernel_launcher"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_gives_up_on_a_kernel_that_never_opens_its_ports() {
+        let message = launch_error(spec(&["sleep", "30"]), Duration::from_millis(500)).await;
+        assert!(
+            message.contains("did not open its ports within 500ms"),
+            "{message}"
+        );
+    }
 }
