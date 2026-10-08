@@ -22,6 +22,8 @@ local function default_buffer_state()
   return {
     session_id = nil,
     kernel_started = false,
+    starting = nil,  -- kernel start in flight: { callbacks = { ... } }
+    run_queue = nil,  -- runs not yet sent to the kernel, oldest first
     selected_kernel_name = nil,
     mark_delimiters = {},  -- extmark id -> last delimiter text seen on that mark
     active_cells = {},  -- cell id -> true while its identity mark exists
@@ -197,9 +199,10 @@ function M.clear_statuses(bufnr)
   M.get(bufnr).statuses = {}
 end
 
---- Forget the buffer's backend session after the backend went away. Outputs
---- and execution counts stay visible; busy markers are cleared. Buffers
---- without state (e.g. already deleted) are left alone.
+--- Forget the buffer's backend session after the backend went away, together
+--- with an in-flight kernel start and runs not yet sent. Outputs and
+--- execution counts stay visible; busy markers are cleared. Buffers without
+--- state (e.g. already deleted) are left alone.
 function M.reset_kernel(bufnr)
   local state = buffers[bufnr]
   if not state then
@@ -207,6 +210,8 @@ function M.reset_kernel(bufnr)
   end
   state.session_id = nil
   state.kernel_started = false
+  state.starting = nil
+  state.run_queue = nil
   state.statuses = {}
 end
 

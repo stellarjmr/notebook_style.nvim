@@ -236,7 +236,7 @@ cargo build --release --manifest-path core/Cargo.toml
 
 Run `:NotebookStyleDownloadBackend` after install/update if your plugin manager did not run the hook or you need to retry backend installation. The downloaded or built binary is stored at `core/target/release/notebook-style-core`; `backend_cmd` can still override this path.
 
-Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a Python Jupyter kernel on demand, sends the current cell source to the kernel, and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
+Then run `:NotebookStyleRunCell` inside a cell. The plugin starts a Python Jupyter kernel on demand, sends the current cell source to the kernel (runs reach the kernel in the order you issue them, and runs issued while the kernel starts wait for it), and renders stdout, `text/plain` results, errors, and `image/png` outputs below the cell. In Ghostty/Kitty, PNG outputs use the Kitty graphics protocol; unsupported terminals fall back to `[image/png output]` text.
 
 While a cell is executing, its output divider shows `Out[*]` (with a `running…` line until the first output arrives), matching Jupyter's `In [*]` convention. Use `:NotebookStyleKernelInterrupt` (default `<leader>ri`) to stop a long-running cell, or `:NotebookStyleKernelRestart` to restart the kernel with a clean state.
 

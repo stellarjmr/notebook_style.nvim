@@ -206,6 +206,10 @@ are not executable and are skipped by RunCell and RunFile.
     at the end of execution unless shown earlier with plt.show(). This is
     kernel execution, not a separate python file.py process.
 
+    The source is taken when you run the cell. Runs reach the kernel in the
+    order you issue them; runs issued while the kernel starts or restarts
+    wait for it instead of starting a second kernel.
+
     A whole-file run without output shows no empty frame, Out[*], running
     placeholder, or automatic kernel-started notification. Failures and
     warnings are still reported. Rerunning replaces previous output, including
@@ -272,7 +276,8 @@ are not executable and are skipped by RunCell and RunFile.
 
                                                     *:NotebookStyleKernelStop*
 :NotebookStyleKernelStop
-    Stop the Python Jupyter kernel for the current buffer.
+    Stop the Python Jupyter kernel for the current buffer. Runs that have not
+    reached the kernel yet are discarded.
 
                                                *:NotebookStyleKernelInterrupt*
 :NotebookStyleKernelInterrupt
@@ -285,7 +290,7 @@ are not executable and are skipped by RunCell and RunFile.
     Restart the kernel for the current buffer: stop it, clear busy cell
     statuses, and start a fresh kernel using the same kernel resolution
     (auto_venv or kernel_name). If no kernel is running, this simply starts
-    one.
+    one. Runs issued during the restart wait for the new kernel.
 
                                                  *:NotebookStyleSelectKernel*
 :NotebookStyleSelectKernel

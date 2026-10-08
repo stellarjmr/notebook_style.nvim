@@ -1285,6 +1285,277 @@ test('backend exit resets buffer sessions and the next run opens a new one', fun
   if not ok then error(err, 0) end
 end)
 
+test('runs issued during kernel startup share one session and keep their order', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'a = 1', '# %%', 'b = 2' })
+
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    exec.run_cell(buf)
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
+    exec.run_cell(buf)
+    -- Edits made while the kernel starts must not change what was run.
+    vim.api.nvim_buf_set_lines(buf, 3, 4, false, { 'b = 3' })
+    assert_eq(fake.count('open_py'), 1, 'a second run must not open another session')
+
+    fake.reply('open_py', nil, { session_id = 's1' })
+    assert_eq(fake.count('start_kernel'), 1, 'a second run must not start another kernel')
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(fake.count('update_cell_source'), 0, 'runs wait until the kernel setup code was sent')
+    fake.reply('execute_silent', nil, { msg_id = 'setup' })
+
+    local first = fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(first.params.source, 'a = 1')
+    fake.reply('execute', nil, { msg_id = 'm1' })
+    assert_eq(fake.count('update_cell_source'), 2, 'the next run is sent once the previous one reached the kernel')
+    local second = fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(second.params.source, 'b = 2', 'a run uses the source from when it was issued')
+    local second_execute = fake.reply('execute', nil, { msg_id = 'm2' })
+    assert_eq(second_execute.params.session_id, 's1')
+    assert_true(first.params.cell_id ~= second.params.cell_id)
+    assert_eq(fake.count('execute'), 2)
+    assert_eq(#messages, 1, 'only the kernel start is announced: ' .. vim.inspect(messages))
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('a restart holds new runs for the new kernel and a failed start drops them', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+    exec.start_kernel(buf)
+    fake.reply('open_py', nil, { session_id = 's1' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+
+    exec.restart_kernel(buf)
+    exec.run_cell(buf)
+    assert_eq(fake.count('update_cell_source'), 0, 'a run issued during a restart waits for the new kernel')
+    fake.reply('stop_kernel', nil, { ok = true })
+    assert_eq(fake.reply('start_kernel', nil, { kernel_name = 'python3' }).params.session_id, 's1')
+    assert_eq(fake.count('update_cell_source'), 0)
+    fake.reply('execute_silent', nil, {})
+    fake.reply('update_cell_source', nil, { ok = true })
+    fake.reply('execute', nil, {})
+
+    exec.stop_kernel(buf)
+    fake.reply('stop_kernel', nil, { ok = true })
+    messages = {}
+    exec.run_cell(buf)
+    fake.reply('start_kernel', 'no kernelspec found', nil)
+    assert_eq(fake.count('update_cell_source'), 1, 'runs must not be sent after a failed start')
+    assert_true(#messages == 1 and messages[1]:find('start_kernel failed', 1, true) ~= nil, vim.inspect(messages))
+    exec.run_cell(buf)
+    assert_eq(fake.count('start_kernel'), 4, 'the next run starts the kernel again')
+    assert_eq(fake.count('open_py'), 1, 'and reuses the session')
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('a start cut short by a backend exit does not block later runs', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+    -- The backend exits while open_py is in flight, and the exit is handled
+    -- before the request's failure (or a reply written just before dying) is
+    -- read. A start in this phase has no session the exit reset could see.
+    for _, late in ipairs({ { 'notebook-style-core exited', nil }, { nil, { session_id = 'dead' } } }) do
+      exec.run_cell(buf)
+      local opened = fake.count('open_py')
+      fake.exit(nil, 9, { replies_after_exit = true })
+      fake.reply('open_py', late[1], late[2])
+      exec.run_cell(buf)
+      assert_eq(fake.count('open_py'), opened + 1, 'a later run must start again instead of waiting for the dead start')
+    end
+    for _, message in ipairs(messages) do
+      assert_true(message:find('execution backend exited', 1, true) ~= nil, 'only exit warnings expected: ' .. vim.inspect(messages))
+    end
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('runs are dropped when the backend cannot be spawned', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local rpc = require('notebook_style.rpc')
+  local spawn = rpc.spawn
+  local old_notify = vim.notify
+  local buf
+  local fake
+
+  local ok, err = pcall(function()
+    vim.notify = function() end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+
+    rpc.spawn = function()
+      error('notebook-style-core spawn failed: backend not installed', 0)
+    end
+    for _ = 1, 2 do
+      local run_ok, run_err = pcall(exec.run_cell, buf)
+      assert_true(not run_ok and tostring(run_err):find('spawn failed', 1, true) ~= nil, tostring(run_err))
+    end
+    assert_eq(state.get(buf).run_queue, nil, 'failed runs must not stay queued')
+    rpc.spawn = spawn
+
+    -- Once a backend exists, only the new run executes.
+    fake = fake_backend()
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { 'x = 2' })
+    exec.run_cell(buf)
+    fake.reply('open_py', nil, { session_id = 's1' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+    assert_eq(fake.reply('update_cell_source', nil, { ok = true }).params.source, 'x = 2')
+    fake.reply('execute', nil, {})
+    assert_eq(fake.count('update_cell_source'), 1)
+  end)
+
+  rpc.spawn = spawn
+  if fake then fake.restore() end
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('rapid runs reach a real kernel once each and in order', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    vim.fn.writefile({
+      '# %%', 'seen = []',
+      '# %%', 'seen.append("A")',
+      '# %%', 'seen.append("B")',
+      '# %%', 'seen.append("C")',
+      '# %%', 'print("".join(seen))',
+    }, project .. '/order.py')
+    vim.cmd('edit ' .. vim.fn.fnameescape(project .. '/order.py'))
+    buf = vim.api.nvim_get_current_buf()
+    local function printed()
+      local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 10)
+      local outputs = state.outputs(buf, list[5])
+      return outputs[1] and outputs[1].text
+    end
+    local function run_all_cells(first)
+      for line = first, 10, 2 do
+        vim.api.nvim_win_set_cursor(0, { line, 0 })
+        exec.run_cell(buf)
+      end
+    end
+
+    -- Issued back to back before the kernel exists, then again on a running kernel.
+    run_all_cells(2)
+    assert_true(vim.wait(20000, function() return printed() ~= nil end, 10), 'runs did not finish: ' .. vim.inspect(messages))
+    assert_eq(printed(), 'ABC\n', 'runs must execute once each, in order')
+    local kernels = vim.split(vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(backends[#backends].pid) })), '\n', { trimempty = true })
+    assert_eq(#kernels, 1, 'one kernel per buffer')
+    run_all_cells(4)
+    assert_true(vim.wait(20000, function() return printed() == 'ABCABC\n' end, 10), 'second round: ' .. vim.inspect(printed()))
+    assert_eq(#messages, 1, 'only the kernel start is announced: ' .. vim.inspect(messages))
+  end)
+
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(exec.stop_kernel, buf)
+    vim.wait(5000, function() return not state.get(buf).kernel_started end, 10)
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  vim.notify = old_notify
+  close_backends()
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('a backend exit with requests in flight notifies once and ignores late replies', function()
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')
@@ -1333,8 +1604,9 @@ test('a backend exit with requests in flight notifies once and ignores late repl
     fake.reply('open_py', nil, { session_id = 'dead' })
     assert_eq(state.get(buf).session_id, nil, 'a late open_py reply must be ignored')
     dead_client.handlers.cell_event({ session_id = 'dead', cell_id = 'x', event = { kind = 'stream', name = 'stdout', text = 'late' } })
+    local opened = fake.count('open_py')
     exec.run_cell(buf)
-    assert_eq(fake.calls[#fake.calls].method, 'open_py', 'the next run must open a new session')
+    assert_eq(fake.count('open_py'), opened + 1, 'the next run must open a new session')
 
     fake.reply('open_py', nil, { session_id = 's4' })
     fake.exit(nil, 9, { replies_after_exit = true })
