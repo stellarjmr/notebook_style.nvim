@@ -721,6 +721,77 @@ test('busy cells render an Out[*] running indicator', function()
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
+test('long output lines wrap at the frame width and stop at output_max_lines', function()
+  local notebook = require('notebook_style')
+  local state = require('notebook_style.state')
+  local render = require('notebook_style.render')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  local ok, err = pcall(function()
+    notebook.setup({ keymaps = false, output_max_lines = 6 })
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print(1)' })
+    local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
+    local id = state.cell_id(buf, cell)
+    -- Output text gets the frame width minus the side borders and padding.
+    local text_width = vim.api.nvim_win_get_width(0) - 4
+    local half = math.floor(text_width / 2)
+
+    local function output_rows(text)
+      state.apply_event(buf, id, { kind = 'execute_input', execution_count = 1 })
+      state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = text })
+      render.render_all(buf, { cell }, 'n', vim.api.nvim_get_current_win())
+      for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })) do
+        local lines = mark[4].virt_lines
+        if lines then
+          local rows = {}
+          for i = 2, #lines - 1 do -- skip the Out[n] divider and the bottom border
+            table.insert(rows, lines[i][2][1])
+          end
+          return rows
+        end
+      end
+      error('no output frame rendered')
+    end
+
+    local rows = output_rows(string.rep('x', 2 * text_width + 5) .. '\n')
+    assert_eq(#rows, 3)
+    assert_eq(rows[1], string.rep('x', text_width))
+    assert_eq(rows[2], string.rep('x', text_width))
+    assert_eq(rows[3], 'xxxxx')
+
+    rows = output_rows(string.rep('中', text_width) .. '\n')
+    assert_eq(rows[1], string.rep('中', half), 'double-width characters fill rows by display cells')
+    assert_eq(#rows, 2)
+
+    -- After a one-cell character, a double-width one that would overflow the
+    -- row moves to the next row.
+    local fit = math.floor((text_width - 1) / 2)
+    rows = output_rows('a' .. string.rep('中', half) .. '\n')
+    assert_eq(rows[1], 'a' .. string.rep('中', fit))
+    assert_eq(rows[2], string.rep('中', half - fit))
+
+    rows = output_rows(string.rep('y', 100 * text_width) .. '\n')
+    assert_eq(#rows, 7, 'six output rows plus the truncation marker')
+    assert_eq(rows[6], string.rep('y', text_width))
+    assert_true(rows[7]:find('output truncated', 1, true) ~= nil, rows[7])
+
+    -- Wrapping must stop at the row budget: a 100K-character line used to take
+    -- seconds per render because the whole line was wrapped every time.
+    local uv = vim.uv or vim.loop
+    local started = uv.hrtime()
+    rows = output_rows(string.rep('z', 100000) .. '\n')
+    local elapsed_ms = (uv.hrtime() - started) / 1e6
+    assert_eq(#rows, 7)
+    assert_true(elapsed_ms < 1000, string.format('rendering a 100K-character line took %.0f ms', elapsed_ms))
+  end)
+
+  vim.api.nvim_buf_delete(buf, { force = true })
+  if not ok then error(err, 0) end
+end)
+
 test('clear output commands remove state, rendering, and output view', function()
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')

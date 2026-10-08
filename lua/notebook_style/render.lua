@@ -147,31 +147,48 @@ local function process_cr(text)
   return table.concat(out, '\n')
 end
 
-local function wrap_line(line, width)
+--- Split a line into rows of at most `width` display cells, returning no more
+--- than `limit` rows. The work is proportional to the part of the line that
+--- is returned, so a huge single-line output stops at the row budget instead
+--- of being wrapped whole on every render. A character wider than `width`
+--- gets a row of its own. Output text is valid UTF-8 (it comes from JSON).
+local function wrap_line(line, width, limit)
   if width <= 0 or vim.fn.strdisplaywidth(line) <= width then
     return { line }
   end
 
   local out = {}
-  local chars = vim.fn.strchars(line)
-  local pos = 0
-
-  while pos < chars do
-    local start = pos
-    local current_width = 0
-    while pos < chars do
-      local char = vim.fn.strcharpart(line, pos, 1)
-      local char_width = vim.fn.strdisplaywidth(char)
-      if current_width + char_width > width then
+  if not line:find('[^\32-\126]') then
+    -- Printable ASCII: one display cell per byte.
+    for start = 1, #line, width do
+      if #out >= limit then
         break
       end
-      current_width = current_width + char_width
-      pos = pos + 1
+      table.insert(out, line:sub(start, start + width - 1))
     end
-    if pos == start then
-      pos = pos + 1
+    return out
+  end
+
+  local char_widths = {}
+  local row, row_width = {}, 0
+  for char in line:gmatch('[^\128-\191][\128-\191]*') do
+    local char_width = char_widths[char]
+    if not char_width then
+      char_width = vim.fn.strdisplaywidth(char)
+      char_widths[char] = char_width
     end
-    table.insert(out, vim.fn.strcharpart(line, start, pos - start))
+    if row_width + char_width > width and #row > 0 then
+      table.insert(out, table.concat(row))
+      if #out >= limit then
+        return out
+      end
+      row, row_width = {}, 0
+    end
+    table.insert(row, char)
+    row_width = row_width + char_width
+  end
+  if #row > 0 and #out < limit then
+    table.insert(out, table.concat(row))
   end
 
   return out
@@ -224,11 +241,12 @@ local function build_output_lines(outputs, width)
 
   local function add_text(text, hl)
     text = strip_ansi(process_cr(text))
-    for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
-      for _, wrapped in ipairs(wrap_line(line, inner_width)) do
-        if #rows >= max_lines then
-          return
-        end
+    for line in (text .. '\n'):gmatch('([^\n]*)\n') do
+      local remaining = max_lines - #rows
+      if remaining <= 0 then
+        return
+      end
+      for _, wrapped in ipairs(wrap_line(line, inner_width, remaining)) do
         table.insert(rows, with_sides(wrapped, hl, width))
       end
     end
