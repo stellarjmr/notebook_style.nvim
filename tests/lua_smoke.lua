@@ -130,6 +130,133 @@ test('errors raised in asynchronous callbacks are detected', function()
     'a libuv callback error was not recorded: ' .. vim.inspect(message))
 end)
 
+-- Replace rpc.spawn with an in-process fake backend, so execution logic can be
+-- tested without the Rust binary or a Jupyter kernel. Requests are recorded
+-- and answered by the test with fake.reply(); fake.exit() behaves like the
+-- backend process exiting. Always call fake.restore() afterwards.
+local function fake_backend()
+  local rpc = require('notebook_style.rpc')
+  local original_spawn = rpc.spawn
+  local fake = { calls = {}, clients = {} }
+
+  rpc.spawn = function(opts)
+    local client = { job = 1000 + #fake.clients, handlers = {}, opts = opts }
+    function client:call(method, params, cb)
+      cb = cb or function() end
+      if self.exited then
+        cb('notebook-style-core is not running', nil)
+        return
+      end
+      table.insert(fake.calls, { client = self, method = method, params = params, cb = cb })
+    end
+    function client:on(method, handler)
+      self.handlers[method] = handler
+    end
+    table.insert(fake.clients, client)
+    fake.client = client
+    return client
+  end
+
+  function fake.methods()
+    return vim.tbl_map(function(call)
+      return call.method
+    end, fake.calls)
+  end
+
+  function fake.count(method)
+    return #vim.tbl_filter(function(call)
+      return call.method == method
+    end, fake.calls)
+  end
+
+  -- Answer the oldest unanswered request for `method`; returns that request.
+  function fake.reply(method, err, result)
+    for _, call in ipairs(fake.calls) do
+      if call.method == method and not call.answered then
+        call.answered = true
+        call.cb(err, result)
+        return call
+      end
+    end
+    error('no unanswered ' .. method .. ' request; calls=' .. vim.inspect(fake.methods()), 2)
+  end
+
+  -- Like rpc.lua when the process exits: outstanding requests fail, then the
+  -- client's on_exit handler runs.
+  function fake.exit(code, signal)
+    local client = fake.client
+    client.exited = true
+    for _, call in ipairs(fake.calls) do
+      if call.client == client and not call.answered then
+        call.answered = true
+        call.cb('notebook-style-core exited', nil)
+      end
+    end
+    client.opts.on_exit(code, signal)
+  end
+
+  function fake.restore()
+    rpc.spawn = original_spawn
+    -- Make exec.lua drop its fake client so later tests spawn a real backend.
+    for _, client in ipairs(fake.clients) do
+      if not client.exited then
+        client.exited = true
+        client.opts.on_exit(0, 0)
+      end
+    end
+  end
+
+  return fake
+end
+
+-- Every real backend the suite spawns, so tests can find its pid and shut it
+-- down. A backend inherits JUPYTER_PATH when it is spawned: a test that sets
+-- up its own kernelspecs must start from a fresh backend, or kernelspec lookup
+-- silently falls back to whatever kernels the user has installed.
+local backends = {}
+do
+  local rpc = require('notebook_style.rpc')
+  local spawn = rpc.spawn
+  rpc.spawn = function(opts)
+    local client
+    client = spawn(vim.tbl_extend('force', opts, {
+      on_exit = function(...)
+        if opts.on_exit then
+          opts.on_exit(...)
+        end
+        client.exit_handled = true
+      end,
+    }))
+    table.insert(backends, client)
+    return client
+  end
+end
+
+-- Shut down every live backend the way Neovim does on exit (stdin EOF, so it
+-- kills its kernels) and wait until exec.lua has handled the exit.
+local function close_backends()
+  local old_notify = vim.notify
+  vim.notify = function() end
+  local live = vim.tbl_filter(function(client)
+    return not client.exit_handled
+  end, backends)
+  for _, client in ipairs(live) do
+    if not client.stdin:is_closing() then
+      client.stdin:close()
+    end
+  end
+  local closed = vim.wait(10000, function()
+    for _, client in ipairs(live) do
+      if not client.exit_handled then
+        return false
+      end
+    end
+    return true
+  end, 10)
+  vim.notify = old_notify
+  assert_true(closed, 'backend did not exit after stdin EOF')
+end
+
 test('setup registers commands and defaults', function()
   local notebook = require('notebook_style')
   notebook.setup({ keymaps = false })
@@ -1012,6 +1139,182 @@ test('file identity survives text edits and retires on delimiter transitions', f
   image.clear = old_clear
   notebook.disable(buf)
   vim.api.nvim_buf_delete(buf, { force = true })
+  if not ok then error(err, 0) end
+end)
+
+test('rpc client delivers responses sent before exit and fails the rest', function()
+  local rpc = require('notebook_style.rpc')
+  local frame = vim.fn.tempname()
+  local payload = vim.mpack.encode({ 1, 1, vim.NIL, 'pong' })
+  local file = assert(io.open(frame, 'wb'))
+  file:write(string.char(0, 0, math.floor(#payload / 256), #payload % 256) .. payload)
+  file:close()
+
+  -- `cat` answers request 1 and exits without answering request 2.
+  local exited
+  local results = {}
+  local client = rpc.spawn({
+    cmd = { 'cat', frame },
+    on_exit = function(code, signal)
+      exited = { code = code, signal = signal }
+    end,
+  })
+  client:call('ping', {}, function(err, result)
+    results[1] = { err = err, result = result }
+  end)
+  client:call('never_answered', {}, function(err, result)
+    results[2] = { err = err, result = result }
+  end)
+  local resolved = vim.wait(5000, function()
+    return exited ~= nil and results[1] ~= nil and results[2] ~= nil
+  end, 10)
+  vim.fn.delete(frame)
+
+  assert_true(resolved, 'calls must resolve once the process exits: ' .. vim.inspect({ exited = exited, results = results }))
+  assert_eq(exited.code, 0)
+  assert_eq(results[1].err, nil, 'a response written before exit must still be delivered')
+  assert_eq(results[1].result, 'pong')
+  assert_eq(results[2].err, 'notebook-style-core exited')
+
+  local late
+  client:call('after_exit', {}, function(err)
+    late = err
+  end)
+  assert_true(vim.wait(1000, function() return late ~= nil end, 10), 'calls after exit must fail')
+  assert_eq(late, 'notebook-style-core is not running')
+end)
+
+test('backend exit resets buffer sessions and the next run opens a new one', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print(1)' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
+
+    exec.run_cell(buf)
+    fake.reply('open_py', nil, { session_id = 'old-session' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+    fake.reply('update_cell_source', nil, { ok = true })
+    local cell_id = fake.reply('execute', nil, { msg_id = 'm1' }).params.cell_id
+    local old_client = fake.client
+    local function event(target, payload)
+      target.handlers.cell_event({ session_id = 'old-session', cell_id = cell_id, event = payload })
+    end
+    event(old_client, { kind = 'execute_input', execution_count = 1 })
+    event(old_client, { kind = 'stream', name = 'stdout', text = '1\n' })
+    assert_eq(state.status(buf, cell), 'busy')
+
+    messages = {}
+    fake.exit(nil, 9)
+    local buffer_state = state.get(buf)
+    assert_eq(buffer_state.session_id, nil, 'the dead backend session must be forgotten')
+    assert_eq(buffer_state.kernel_started, false)
+    assert_eq(state.status(buf, cell), nil, 'cells must not stay busy after the backend died')
+    assert_eq(state.outputs(buf, cell)[1].text, '1\n', 'existing outputs stay visible')
+    assert_eq(#messages, 1, 'expected one notification, got ' .. vim.inspect(messages))
+    assert_true(messages[1]:find('execution backend exited', 1, true) ~= nil, messages[1])
+
+    event(old_client, { kind = 'stream', name = 'stdout', text = 'late\n' })
+    assert_eq(state.outputs(buf, cell)[1].text, '1\n', 'late events of the dead session must be ignored')
+
+    exec.run_cell(buf)
+    assert_eq(#fake.clients, 2, 'the next run must spawn a new backend')
+    assert_true(fake.reply('open_py', nil, { session_id = 'new-session' }).client ~= old_client)
+    assert_eq(fake.reply('start_kernel', nil, { kernel_name = 'python3' }).params.session_id, 'new-session')
+    fake.reply('execute_silent', nil, {})
+    fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(fake.reply('execute', nil, { msg_id = 'm2' }).params.session_id, 'new-session')
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('a killed backend is replaced and the buffer keeps executing', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages, orphans = {}, {}
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    vim.fn.writefile({ '# %%', 'print("one")', '# %%', 'print("two")' }, project .. '/sample.py')
+    vim.cmd('edit ' .. vim.fn.fnameescape(project .. '/sample.py'))
+    buf = vim.api.nvim_get_current_buf()
+    local function output(index)
+      local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 4)
+      local outputs = state.outputs(buf, list[index])
+      return outputs[1] and outputs[1].text
+    end
+
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    exec.run_cell(buf)
+    assert_true(vim.wait(20000, function() return output(1) == 'one\n' end, 10), 'first run failed: ' .. vim.inspect(messages))
+    local first = backends[#backends]
+    -- B7: a backend killed by a signal orphans its kernels; remember them for cleanup.
+    orphans = vim.split(vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(first.pid) })), '\n', { trimempty = true })
+    vim.fn.system({ 'kill', '-9', tostring(first.pid) })
+    assert_true(vim.wait(5000, function() return state.get(buf).session_id == nil end, 10), 'backend exit was not handled')
+
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
+    exec.run_cell(buf)
+    assert_true(vim.wait(20000, function() return output(2) == 'two\n' end, 10), 'run after backend loss failed: ' .. vim.inspect(messages))
+    assert_true(backends[#backends] ~= first, 'a new backend must serve the new session')
+  end)
+
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(exec.stop_kernel, buf)
+    vim.wait(5000, function() return not state.get(buf).kernel_started end, 10)
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  for _, pid in ipairs(orphans) do
+    vim.fn.system({ 'kill', pid })
+  end
+  vim.notify = old_notify
+  close_backends()
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
 end)
 

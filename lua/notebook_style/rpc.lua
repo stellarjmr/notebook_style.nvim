@@ -64,20 +64,10 @@ function M.spawn(opts)
     cwd = opts.cwd,
     env = opts.env,
   }, function(code, signal)
-    warn('exited code=' .. tostring(code) .. ' signal=' .. tostring(signal))
-    if c.on_exit then
-      vim.schedule(function()
-        c.on_exit(code)
-      end)
-    end
+    c.exited = true
     pcall(function()
       if not stdin:is_closing() then
         stdin:close()
-      end
-    end)
-    pcall(function()
-      if not stdout:is_closing() then
-        stdout:close()
       end
     end)
     pcall(function()
@@ -88,6 +78,20 @@ function M.spawn(opts)
     pcall(function()
       if handle and not handle:is_closing() then
         handle:close()
+      end
+    end)
+    -- Responses written just before the exit may still be in the stdout pipe:
+    -- keep reading until EOF, but never leave callers waiting if EOF is late.
+    local timer = uv.new_timer()
+    timer:start(1000, 0, function()
+      timer:close()
+      c:_close()
+    end)
+    vim.schedule(function()
+      if c.on_exit then
+        c.on_exit(code, signal)
+      else
+        warn('exited code=' .. tostring(code) .. ' signal=' .. tostring(signal))
       end
     end)
   end)
@@ -101,9 +105,9 @@ function M.spawn(opts)
   stdout:read_start(function(err, chunk)
     if err then
       warn('stdout read: ' .. err)
-      return
     end
     if not chunk then
+      c:_close()
       return
     end
     c.buf = c.buf .. chunk
@@ -129,6 +133,28 @@ end
 function Client:stop()
   if self.handle and not self.handle:is_closing() then
     self.handle:kill('sigterm')
+  end
+end
+
+--- Stop reading responses and fail every outstanding call, in request order,
+--- so no caller waits forever for a backend that is gone.
+function Client:_close()
+  if self.closed then
+    return
+  end
+  self.closed = true
+  if not self.stdout:is_closing() then
+    self.stdout:close()
+  end
+
+  local pending = self.pending
+  self.pending = {}
+  local ids = vim.tbl_keys(pending)
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    vim.schedule(function()
+      pending[id]('notebook-style-core exited', nil)
+    end)
   end
 end
 
@@ -206,9 +232,17 @@ function Client:_write(payload)
 end
 
 function Client:call(method, params, cb)
+  cb = cb or function() end
+  if self.exited or self.closed then
+    vim.schedule(function()
+      cb('notebook-style-core is not running', nil)
+    end)
+    return
+  end
+
   local id = self.next_id
   self.next_id = self.next_id + 1
-  self.pending[id] = cb or function() end
+  self.pending[id] = cb
   self:_write(mpack.encode({ 0, id, method, { params or vim.empty_dict() } }))
 end
 

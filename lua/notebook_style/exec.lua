@@ -85,18 +85,48 @@ local function find_local_venv_python(start_dir)
   return nil
 end
 
+--- Forget every session of a backend that exited. Its kernels are gone (or at
+--- least unreachable), so buffers start a new session on their next run
+--- instead of sending requests for session ids the next backend never issued.
+local function on_backend_exit(exited_client, code, signal)
+  if client == exited_client then
+    client = nil
+  end
+
+  local affected = {}
+  for session_id, bufnr in pairs(session_to_buf) do
+    session_to_buf[session_id] = nil
+    affected[bufnr] = true
+  end
+  for bufnr in pairs(affected) do
+    state.reset_kernel(bufnr)
+    refresh(bufnr, { preserve_visibility = true })
+  end
+
+  vim.notify(
+    string.format(
+      'NotebookStyle: the execution backend exited (code=%s, signal=%s); the next run starts a new kernel',
+      tostring(code),
+      tostring(signal)
+    ),
+    vim.log.levels.WARN
+  )
+end
+
 local function ensure_client()
   if client and client.job then
     return client
   end
 
   local cmd = config.options.backend_cmd or default_backend_cmd()
-  client = rpc.spawn({
+  local spawned
+  spawned = rpc.spawn({
     cmd = cmd,
-    on_exit = function()
-      client = nil
+    on_exit = function(code, signal)
+      on_backend_exit(spawned, code, signal)
     end,
   })
+  client = spawned
 
   client:on('cell_event', function(args)
     local payload = args[1] or args

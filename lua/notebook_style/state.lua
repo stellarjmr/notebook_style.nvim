@@ -197,6 +197,19 @@ function M.clear_statuses(bufnr)
   M.get(bufnr).statuses = {}
 end
 
+--- Forget the buffer's backend session after the backend went away. Outputs
+--- and execution counts stay visible; busy markers are cleared. Buffers
+--- without state (e.g. already deleted) are left alone.
+function M.reset_kernel(bufnr)
+  local state = buffers[bufnr]
+  if not state then
+    return
+  end
+  state.session_id = nil
+  state.kernel_started = false
+  state.statuses = {}
+end
+
 function M.set_kernel_name(bufnr, kernel_name)
   M.get(bufnr).selected_kernel_name = kernel_name
 end
