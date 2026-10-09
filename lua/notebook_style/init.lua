@@ -221,8 +221,11 @@ function M.enable(bufnr)
     })
   end
 
-  -- Clean up on buffer delete
-  vim.api.nvim_create_autocmd('BufDelete', {
+  -- Clean up when the buffer goes away. A listed buffer gets BufDelete
+  -- (:bdelete, :bwipeout); an unlisted one, such as a scratch buffer, only
+  -- gets BufWipeout when it is wiped. disable() runs once: it removes this
+  -- group.
+  vim.api.nvim_create_autocmd({ 'BufDelete', 'BufWipeout' }, {
     group = group,
     buffer = bufnr,
     callback = function()

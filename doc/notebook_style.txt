@@ -172,7 +172,7 @@ are not executable and are skipped by RunCell and RunFile.
                                                     *:NotebookStyleDisable*
 :NotebookStyleDisable
     Disable the plugin for the current buffer and shut down its kernel, if
-    any. Deleting the buffer does the same.
+    any. Deleting or wiping the buffer does the same.
 
                                                     *:NotebookStyleToggle*
 :NotebookStyleToggle

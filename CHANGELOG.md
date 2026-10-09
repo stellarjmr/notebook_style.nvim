@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - The documented minimum Neovim version is now 0.10 (it was 0.8). Rendering has needed 0.10 for some time: it uses the `virt_text_repeat_linebreak` extmark option, which older versions reject. `:checkhealth notebook_style` now reports an older Neovim as an error instead of saying core rendering still works.
 - A run uses the cell's source at the moment it was issued, even if the buffer is edited while the kernel starts. `:NotebookStyleKernelStop` discards runs that have not reached the kernel yet (while a kernel is still starting or restarting, that is all it does).
-- Deleting a buffer, or running `:NotebookStyleDisable` (or toggling the plugin off) for it, now shuts down the buffer's kernel. Previously the kernel kept running, unreachable, until Neovim exited.
+- Deleting or wiping a buffer (also an unlisted one, such as a scratch buffer), or running `:NotebookStyleDisable` (or toggling the plugin off) for it, now shuts down the buffer's kernel. Previously the kernel kept running, unreachable, until Neovim exited.
 
 ## [0.11.0] - 2026-09-22
 

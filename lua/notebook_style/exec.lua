@@ -565,13 +565,17 @@ function M.start_kernel(bufnr, callback, quiet)
       finish_start(bufnr, buffer_state, start, false)
       return
     end
+    if buffer_state.starting ~= start then
+      -- The buffer was shut down meanwhile: release the session it got, and
+      -- do not report a failure nobody is waiting for.
+      if not err then
+        close_session(cl, result.session_id)
+      end
+      return
+    end
     if err then
       notify_failure('NotebookStyle open_py failed: ', err)
       finish_start(bufnr, buffer_state, start, false)
-      return
-    end
-    if buffer_state.starting ~= start then
-      close_session(cl, result.session_id)
       return
     end
 

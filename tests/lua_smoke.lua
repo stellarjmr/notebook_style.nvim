@@ -237,6 +237,13 @@ do
   end
 end
 
+-- Whether a process exists (`kill -0`). A process that exited but was not
+-- reaped by its parent still exists.
+local function process_alive(pid)
+  vim.fn.system({ 'kill', '-0', tostring(pid) })
+  return vim.v.shell_error == 0
+end
+
 -- Shut down every live backend the way Neovim does on exit (stdin EOF, so it
 -- kills its kernels) and wait until exec.lua has handled the exit.
 local function close_backends()
@@ -2048,6 +2055,92 @@ test('deleting or disabling a buffer closes its backend session', function()
   if not ok then error(err, 0) end
 end)
 
+test('wiping an unlisted buffer also closes its backend session', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local bufs = {}
+
+  -- Unlisted, like a plugin's scratch buffer: wiping it fires BufWipeout but
+  -- no BufDelete.
+  local function scratch_buffer()
+    local buf = vim.api.nvim_create_buf(false, true)
+    table.insert(bufs, buf)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    return buf
+  end
+  local function has_state(buf)
+    for b in state.each() do
+      if b == buf then
+        return true
+      end
+    end
+    return false
+  end
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+
+    -- With a running kernel.
+    local buf = scratch_buffer()
+    assert_true(notebook.enabled_buffers[buf], 'FileType enables the unlisted buffer')
+    exec.start_kernel(buf)
+    fake.reply('open_py', nil, { session_id = 'u1' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+    vim.api.nvim_buf_delete(buf, { force = true })
+    assert_eq(fake.reply('close', nil, { ok = true }).params.session_id, 'u1')
+    assert_true(not has_state(buf), 'the wiped buffer leaves no state')
+    -- A late event for the closed session must not bring the state back.
+    fake.client.handlers.cell_event({ session_id = 'u1', cell_id = 'cell-late', event = { kind = 'stream', name = 'stdout', text = 'late\n' } })
+    assert_true(not has_state(buf), 'a late event must not recreate the state of a wiped buffer')
+
+    -- Wiped before its session was opened: the session it gets is closed.
+    buf = scratch_buffer()
+    exec.run_cell(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    fake.reply('open_py', nil, { session_id = 'u2' })
+    assert_eq(fake.reply('close', nil, { ok = true }).params.session_id, 'u2')
+
+    -- Wiped while its kernel launches: closed once the launch completes.
+    buf = scratch_buffer()
+    exec.run_cell(buf)
+    fake.reply('open_py', nil, { session_id = 'u3' })
+    vim.api.nvim_buf_delete(buf, { force = true })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(fake.reply('close', nil, { ok = true }).params.session_id, 'u3')
+    assert_eq(fake.count('start_kernel'), 2, 'no kernel is started for a wiped buffer')
+    assert_eq(fake.count('update_cell_source'), 0, 'no run of a wiped buffer may be sent')
+    assert_eq(fake.count('execute'), 0)
+
+    -- A failed open_py for a buffer that is gone is not reported.
+    buf = scratch_buffer()
+    exec.run_cell(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    messages = {}
+    fake.reply('open_py', 'open_py failed on purpose', nil)
+    assert_eq(#messages, 0, 'nobody waits for this start: ' .. vim.inspect(messages))
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  for _, b in ipairs(bufs) do
+    if vim.api.nvim_buf_is_valid(b) then
+      pcall(notebook.disable, b)
+      pcall(vim.api.nvim_buf_delete, b, { force = true })
+    end
+    state.clear(b)
+  end
+  if not ok then error(err, 0) end
+end)
+
 test('deleting a buffer stops its real kernel process', function()
   local backend = backend_path()
   local python = vim.fn.exepath('python3')
@@ -2089,27 +2182,90 @@ test('deleting a buffer stops its real kernel process', function()
       return outputs[1] and outputs[1].text == 'alive\n'
     end, 10), 'run failed: ' .. vim.inspect(messages))
 
-    local backend_pid = tostring(backends[#backends].pid)
-    local function kernel_count()
-      return #vim.split(vim.trim(vim.fn.system({ 'pgrep', '-P', backend_pid })), '\n', { trimempty = true })
-    end
-    assert_eq(kernel_count(), 1)
+    local backend = backends[#backends]
+    local kernel_pid = vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(backend.pid) }))
+    assert_true(kernel_pid:match('^%d+$') ~= nil, 'expected one kernel process, got: ' .. kernel_pid)
     vim.cmd('bdelete! ' .. buf)
     buf = nil
-    assert_true(vim.wait(5000, function() return kernel_count() == 0 end, 50), 'the kernel outlived its buffer')
+    assert_true(vim.wait(5000, function() return not process_alive(kernel_pid) end, 50), 'the kernel outlived its buffer')
+    assert_true(not backend.exit_handled, 'the backend itself must keep running')
   end)
 
   vim.notify = old_notify
   if buf and vim.api.nvim_buf_is_valid(buf) then
     pcall(exec.stop_kernel, buf)
     vim.wait(5000, function() return not state.get(buf).kernel_started end, 10)
-    notebook.disable(buf)
-    vim.api.nvim_buf_delete(buf, { force = true })
+    pcall(notebook.disable, buf)
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
+end)
+
+test('deleting a buffer while its real kernel launches stops that kernel', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function() end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    buf = vim.api.nvim_create_buf(true, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print("never")' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    exec.run_cell(buf)
+
+    -- Catch the start while the backend launches the kernel: the kernel
+    -- process exists, its start_kernel request is unanswered.
+    local client = backends[#backends]
+    local kernel_pid
+    assert_true(vim.wait(20000, function()
+      local start = state.get(buf).starting
+      if not (start and start.launching) then
+        return false
+      end
+      kernel_pid = vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(client.pid) }))
+      return kernel_pid:match('^%d+$') ~= nil
+    end, 2), 'did not see the kernel launching')
+    vim.api.nvim_buf_delete(buf, { force = true })
+    buf = nil
+    -- The session is closed once the launch completes, which kills the kernel.
+    assert_true(vim.wait(10000, function() return not process_alive(kernel_pid) end, 50), 'the kernel launched for a deleted buffer kept running')
+    assert_true(not client.exit_handled, 'the backend itself must keep running')
+  end)
+
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(notebook.disable, buf)
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+  end
+  local closed, close_err = pcall(close_backends)
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('rapid runs reach a real kernel once each and in order', function()
