@@ -336,9 +336,10 @@ impl Server {
 
         {
             let mut slot = session.kernel.write().await;
-            // Drop alone doesn't kill the child process — only Kernel::kill
-            // does. Without explicit kill, re-calling start_kernel orphans
-            // the previous ipykernel_launcher (process leak).
+            // Dropping the previous kernel would kill its process
+            // (kill_on_drop) but leave its iopub task running (it does not
+            // stop by itself), and that task keeps the previous event pump
+            // alive. Kernel::kill aborts the task and waits for the process.
             if let Some(old) = slot.take() {
                 let _ = old.kill().await;
             }
