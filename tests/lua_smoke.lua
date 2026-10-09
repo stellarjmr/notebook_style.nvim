@@ -1255,8 +1255,8 @@ test('a failed backend download keeps the installed backend', function()
   end
 
   -- Stand-ins first on PATH: git reports a release tag; curl writes part of
-  -- the file to its -o path and fails like an interrupted transfer, or with
-  -- NBS_FAKE_CURL_OK writes the whole file; cargo fails.
+  -- the file to its -o path and fails like an interrupted transfer, or
+  -- writes NBS_FAKE_CURL_OK as the whole file; cargo fails.
   local root = vim.fn.tempname()
   local bin = root .. '/bin'
   local release_dir = root .. '/plugin/core/target/release'
@@ -1271,7 +1271,7 @@ test('a failed backend download keeps the installed backend', function()
   script('git', { 'echo v0.0.0-test' })
   script('curl', {
     'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done',
-    'if [ -n "$NBS_FAKE_CURL_OK" ]; then echo "new backend" > "$out"; exit 0; fi',
+    'if [ -n "$NBS_FAKE_CURL_OK" ]; then echo "$NBS_FAKE_CURL_OK" > "$out"; exit 0; fi',
     'printf partial > "$out"',
     'exit 18',
   })
@@ -1279,8 +1279,9 @@ test('a failed backend download keeps the installed backend', function()
   vim.fn.writefile({ 'old backend' }, dest)
   vim.fn.setfperm(dest, 'rwxr-xr-x')
 
-  local old_path, old_notify = vim.env.PATH, vim.notify
+  local old_path, old_notify, old_curl_ok = vim.env.PATH, vim.notify, vim.env.NBS_FAKE_CURL_OK
   vim.env.PATH = bin .. ':' .. old_path
+  vim.env.NBS_FAKE_CURL_OK = nil
   vim.notify = function() end
   local ok, err = pcall(function()
     local installed, install_err = pcall(install.run, { dir = root .. '/plugin' })
@@ -1290,15 +1291,25 @@ test('a failed backend download keeps the installed backend', function()
     assert_eq(vim.fn.executable(dest), 1, 'the installed backend must stay executable')
     assert_eq(table.concat(vim.fn.readdir(release_dir), ' '), 'notebook-style-core', 'no partial download may be left behind')
 
-    vim.env.NBS_FAKE_CURL_OK = '1'
+    vim.env.NBS_FAKE_CURL_OK = 'new backend'
     assert_eq(install.run({ dir = root .. '/plugin' }), true, 'a complete download is installed')
     assert_eq(table.concat(vim.fn.readfile(dest), '\n'), 'new backend', 'the complete download replaces the backend')
     assert_eq(vim.fn.executable(dest), 1, 'the new backend must be executable')
     assert_eq(table.concat(vim.fn.readdir(release_dir), ' '), 'notebook-style-core', 'the download file is moved into place')
+
+    -- A download that cannot be made executable must not replace it either.
+    script('chmod', { 'echo "fake chmod: not permitted" >&2', 'exit 1' })
+    vim.env.NBS_FAKE_CURL_OK = 'newer backend'
+    installed, install_err = pcall(install.run, { dir = root .. '/plugin' })
+    assert_eq(installed, false, 'a failed chmod is an error')
+    assert_true(tostring(install_err):find('could not make the downloaded backend executable', 1, true) ~= nil, 'unexpected error: ' .. tostring(install_err))
+    assert_eq(table.concat(vim.fn.readfile(dest), '\n'), 'new backend', 'a failed chmod must keep the installed backend')
+    assert_eq(vim.fn.executable(dest), 1, 'which stays executable')
+    assert_eq(table.concat(vim.fn.readdir(release_dir), ' '), 'notebook-style-core', 'and the download is removed')
   end)
 
   vim.env.PATH = old_path
-  vim.env.NBS_FAKE_CURL_OK = nil
+  vim.env.NBS_FAKE_CURL_OK = old_curl_ok
   vim.notify = old_notify
   vim.fn.delete(root, 'rf')
   if not ok then error(err, 0) end

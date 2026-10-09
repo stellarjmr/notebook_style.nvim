@@ -106,10 +106,12 @@ function M.run(plugin)
 
   local url = M._url_for(tag, target)
   local dest = binary_dest(plugin_dir)
-  -- Download next to the binary and move it into place only when complete,
-  -- so a failed or interrupted download never replaces a working backend
-  -- with a partial file.
-  local download = dest .. '.download'
+  -- Download next to the binary and move it into place only when complete
+  -- and executable, so a failed or interrupted download never replaces a
+  -- working backend. The name is unique, so two installers cannot write into
+  -- the same file. If <dest> is a symlink, the rename replaces the link
+  -- itself, not the file it points to.
+  local download = ('%s.download-%d-%d'):format(dest, vim.fn.getpid(), (vim.uv or vim.loop).hrtime())
   notify(('notebook_style: downloading prebuilt backend %s for %s'):format(tag, target))
   local out = vim.fn.system({
     'curl',
@@ -129,7 +131,11 @@ function M.run(plugin)
     return false
   end
 
-  vim.fn.system({ 'chmod', '+x', download })
+  local chmod_out = vim.fn.system({ 'chmod', '+x', download })
+  if vim.v.shell_error ~= 0 then
+    os.remove(download)
+    error(('notebook_style: could not make the downloaded backend executable; the installed backend is unchanged:\n%s'):format(chmod_out))
+  end
   local uv = vim.uv or vim.loop
   if uv.os_uname().sysname == 'Darwin' then
     vim.fn.system({ 'xattr', '-cr', download })
