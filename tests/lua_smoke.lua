@@ -856,6 +856,45 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
   if not ok then error(err, 0) end
 end)
 
+test('outputs with a NUL byte render it as ^@', function()
+  local notebook = require('notebook_style')
+  local state = require('notebook_style.state')
+  local render = require('notebook_style.render')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local buf = vim.api.nvim_create_buf(false, true)
+
+  local ok, err = pcall(function()
+    notebook.setup({ keymaps = false })
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print("a\\0b")' })
+    local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
+    local id = state.cell_id(buf, cell)
+    state.apply_event(buf, id, { kind = 'execute_input', execution_count = 1 })
+    state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = 'a\0b\n' })
+    state.apply_event(buf, id, { kind = 'execute_result', execution_count = 1, data = { ['text/plain'] = "'c\\x00d'\0" } })
+    state.apply_event(buf, id, { kind = 'error', ename = 'ValueError', evalue = 'e\0f', traceback = { 'g\0h' } })
+    render.render_all(buf, { cell }, 'n', vim.api.nvim_get_current_win())
+
+    local rows = {}
+    for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })) do
+      for i, line in ipairs(mark[4].virt_lines or {}) do
+        if i > 1 and line[2] then
+          table.insert(rows, line[2][1])
+        end
+      end
+    end
+    local text = table.concat(rows, '\n')
+    for _, expected in ipairs({ 'a^@b', "'c\\x00d'^@", 'ValueError: e^@f', 'g^@h' }) do
+      assert_true(text:find(expected, 1, true) ~= nil, 'expected ' .. expected .. ' in ' .. vim.inspect(rows))
+    end
+  end)
+
+  state.clear(buf)
+  vim.api.nvim_buf_delete(buf, { force = true })
+  if not ok then error(err, 0) end
+end)
+
 test('clear output commands remove state, rendering, and output view', function()
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')

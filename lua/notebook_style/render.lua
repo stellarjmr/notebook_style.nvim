@@ -262,6 +262,10 @@ local function build_output_lines(outputs, width)
 
   local function add_text(text, hl)
     text = strip_ansi(process_cr(text))
+    -- Show NUL as Neovim shows it in a buffer. A string with NUL passed to a
+    -- vim.fn function becomes a Blob, and strdisplaywidth raised E976 on
+    -- every render of the buffer.
+    text = text:gsub('%z', '^@')
     for line in (text .. '\n'):gmatch('([^\n]*)\n') do
       local remaining = max_lines - #rows
       if remaining <= 0 then
