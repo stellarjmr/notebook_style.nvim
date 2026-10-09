@@ -85,6 +85,15 @@ local function find_local_venv_python(start_dir)
   return nil
 end
 
+--- What happens after the kernel is gone: with auto_start_kernel (the
+--- default) the next run starts a new one, otherwise the user does.
+local function next_run_hint()
+  if config.options.auto_start_kernel then
+    return 'the next run starts a new kernel'
+  end
+  return 'start a new one with :NotebookStyleKernelStart'
+end
+
 --- Forget every session of a backend that exited. Its kernels are gone (or at
 --- least unreachable), so buffers start a new session on their next run
 --- instead of sending requests for session ids the next backend never issued.
@@ -111,9 +120,10 @@ local function on_backend_exit(exited_client, code, signal)
 
   vim.notify(
     string.format(
-      'NotebookStyle: the execution backend exited (code=%s, signal=%s); the next run starts a new kernel',
+      'NotebookStyle: the execution backend exited (code=%s, signal=%s); %s',
       tostring(code),
-      tostring(signal)
+      tostring(signal),
+      next_run_hint()
     ),
     vim.log.levels.WARN
   )
@@ -131,8 +141,9 @@ local function on_kernel_exit(bufnr, payload)
   refresh(bufnr, { preserve_visibility = true })
   vim.notify(
     string.format(
-      'NotebookStyle: the kernel exited (%s); the next run starts a new kernel%s',
+      'NotebookStyle: the kernel exited (%s); %s%s',
       tostring(payload.status),
+      next_run_hint(),
       payload.stderr or ''
     ),
     vim.log.levels.WARN

@@ -356,7 +356,11 @@ impl Server {
                 if let KernelEvent::Exited { status, stderr } = &ev {
                     // The kernel died by itself: drop it, so later requests
                     // fail at once instead of waiting on it, and tell the
-                    // frontend. A kernel that replaced it stays.
+                    // frontend. A kernel that replaced it meanwhile stays, and
+                    // then there is nothing to report: the frontend stopped or
+                    // replaced this one itself, and a report would make it
+                    // treat the new kernel as dead. Either way nothing else
+                    // of this kernel is forwarded.
                     let dead = {
                         let mut slot = session_clone.kernel.write().await;
                         if slot.as_ref().is_some_and(|k| k.session() == kernel_id) {
@@ -367,14 +371,14 @@ impl Server {
                     };
                     if let Some(k) = dead {
                         let _ = k.kill().await;
+                        let note = json!({
+                            "session_id": sid_clone,
+                            "status": status,
+                            "stderr": stderr,
+                        });
+                        server.notify("kernel_exited", note).await;
                     }
-                    let note = json!({
-                        "session_id": sid_clone,
-                        "status": status,
-                        "stderr": stderr,
-                    });
-                    server.notify("kernel_exited", note).await;
-                    continue;
+                    break;
                 }
                 if let Some((cell_id, payload)) = session_clone.apply_event(&ev) {
                     let note = json!({
@@ -391,7 +395,7 @@ impl Server {
                     server.notify("kernel_event", note).await;
                 }
             }
-            tracing::info!("kernel events channel closed for session {sid_clone}");
+            tracing::info!("kernel event pump ended for session {sid_clone}");
         });
 
         Ok(json!({ "kernel_name": kernel_name }))

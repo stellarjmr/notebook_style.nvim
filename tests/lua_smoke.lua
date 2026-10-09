@@ -2722,8 +2722,11 @@ test('a real kernel that dies is reported and replaced on the next run', functio
     buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_set_current_buf(buf)
     vim.bo[buf].filetype = 'python'
+    -- Cell 2 prints and sleeps first, so it is busy when the kernel dies.
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-      '# %%', 'print("one")', '# %%', 'import os; os._exit(3)', '# %%', 'print("three")',
+      '# %%', 'print("one")',
+      '# %%', 'import os, time; print("dying", flush=True); time.sleep(0.3); os._exit(3)',
+      '# %%', 'print("three")',
     })
     local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 6)
     local function output(i)
@@ -2734,10 +2737,17 @@ test('a real kernel that dies is reported and replaced on the next run', functio
       vim.api.nvim_win_set_cursor(0, { 2 * i, 0 })
       exec.run_cell(buf)
     end
+    local function finished(i)
+      local status = state.status(buf, list[i])
+      return status ~= nil and status ~= 'busy'
+    end
 
     run(1)
-    assert_true(vim.wait(20000, function() return output(1) == 'one\n' end, 10), 'run failed: ' .. vim.inspect(messages))
+    -- Wait until cell 1 has finished, not only printed: a request that
+    -- reaches ipykernel 7.0-7.3 while it sends a reply can be lost (B13).
+    assert_true(vim.wait(20000, function() return output(1) == 'one\n' and finished(1) end, 10), 'run failed: ' .. vim.inspect(messages))
     run(2)
+    assert_true(vim.wait(10000, function() return state.status(buf, list[2]) == 'busy' end, 10), 'cell 2 must be running before the kernel dies')
     local function report()
       for _, message in ipairs(messages) do
         if message:find('the kernel exited', 1, true) then
@@ -2758,6 +2768,104 @@ test('a real kernel that dies is reported and replaced on the next run', functio
   if buf and vim.api.nvim_buf_is_valid(buf) then
     notebook.disable(buf)
     vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  local closed, close_err = pcall(close_backends)
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
+end)
+
+test('the exit of a kernel that was replaced meanwhile is not reported', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      '# %%', 'import os; print(os.getpid())',
+      '# %%', 'import os, time; time.sleep(1.6); os._exit(1)',
+      '# %%', 'import os; print(os.getpid())',
+    })
+    local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 6)
+    local function output(i)
+      local outputs = state.outputs(buf, list[i])
+      return outputs[1] and outputs[1].text
+    end
+    local function run(i)
+      vim.api.nvim_win_set_cursor(0, { 2 * i, 0 })
+      exec.run_cell(buf)
+    end
+    local function reported()
+      for _, message in ipairs(messages) do
+        if message:find('the kernel exited', 1, true) then
+          return message
+        end
+      end
+    end
+
+    run(1)
+    assert_true(vim.wait(20000, function()
+      local status = state.status(buf, list[1])
+      return output(1) ~= nil and status ~= nil and status ~= 'busy'
+    end, 10), 'run failed: ' .. vim.inspect(messages))
+    run(2)
+    assert_true(vim.wait(10000, function() return state.status(buf, list[2]) == 'busy' end, 10), 'cell 2 must be running')
+
+    -- The dying kernel's exit must be handled after a replacement took its
+    -- place. A complete request waits for the busy kernel (up to 2 s) and
+    -- holds the session's kernel meanwhile; the replacing start_kernel queues
+    -- behind it, ahead of the exit, which comes after the 1.6 s sleep.
+    local client = backends[#backends]
+    local sid = state.get(buf).session_id
+    client:call('complete', { session_id = sid, code = 'os.pa', cursor_pos = 5 }, function() end)
+    vim.wait(100)
+    local replaced
+    client:call('start_kernel', { session_id = sid, kernel_name = 'notebook-style-smoke' }, function(start_err)
+      replaced = start_err or 'ok'
+    end)
+    assert_true(vim.wait(20000, function() return replaced ~= nil end, 20), 'the replacing start must answer')
+    assert_eq(replaced, 'ok', 'the replacing start must succeed')
+    vim.wait(1500) -- the old kernel's exit is noticed within 0.5 s of its death
+    assert_true(reported() == nil, 'the exit of the replaced kernel must not be reported: ' .. vim.inspect(messages))
+    assert_eq(state.get(buf).kernel_started, true, 'the buffer must still count its kernel as running')
+
+    local replacement = vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(client.pid) }))
+    assert_true(replacement:match('^%d+$') ~= nil, 'expected one kernel process, got: ' .. replacement)
+    run(3)
+    assert_true(vim.wait(20000, function() return output(3) ~= nil end, 10), 'cell 3 did not run: ' .. vim.inspect(messages))
+    assert_eq(vim.trim(output(3)), replacement, 'the next run must use the replacement kernel')
+  end)
+
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    pcall(notebook.disable, buf)
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
   end
   local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
