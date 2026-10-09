@@ -610,11 +610,12 @@ end
 --- Stop the buffer's kernel once its run in flight, if any, has finished.
 --- Until the stop completes, runs and start_kernel callers wait as during a
 --- start; `after_stop(callbacks)` then gets the waiting callers. If the stop
---- fails, the kernel keeps running and serves them.
-local function stop_held(bufnr, buffer_state, failure_message, after_stop)
+--- fails, the kernel keeps running and serves them. `kind` is 'stop' or
+--- 'restart'.
+local function stop_held(bufnr, buffer_state, kind, failure_message, after_stop)
   local session_id = buffer_state.session_id
   local cl = ensure_client()
-  local hold = { callbacks = {}, client = cl }
+  local hold = { callbacks = {}, client = cl, kind = kind }
   buffer_state.starting = hold
 
   after_run_in_flight(buffer_state, function()
@@ -631,6 +632,12 @@ local function stop_held(bufnr, buffer_state, failure_message, after_stop)
         return
       end
       if err then
+        if rpc.is_backend_gone(err) then
+          -- No kernel serves the waiting callers: drop them as a failed
+          -- start would (on_backend_exit reports the exit).
+          buffer_state.run_queue = nil
+          return
+        end
         notify_failure(failure_message, err)
         run_callbacks(hold.callbacks)
         pump(bufnr)
@@ -648,11 +655,23 @@ function M.stop_kernel(bufnr)
   local buffer_state = state.get(bufnr)
   -- Runs that have not reached the kernel yet are dropped with it.
   buffer_state.run_queue = nil
-  if buffer_state.starting or not buffer_state.session_id then
-    return -- a start or restart in flight is not cancelled
+  local starting = buffer_state.starting
+  if starting and starting.kind == 'stop' then
+    -- A stop is already in flight: kernel starts requested since then are
+    -- dropped too, so the kernel stays stopped.
+    starting.callbacks = {}
+    return
+  end
+  if starting then
+    -- A start or restart in flight is not cancelled.
+    vim.notify('NotebookStyle: the kernel is still starting, so it was not stopped; queued runs were discarded', vim.log.levels.INFO)
+    return
+  end
+  if not buffer_state.session_id then
+    return
   end
 
-  stop_held(bufnr, buffer_state, 'NotebookStyle stop_kernel failed: ', function(callbacks)
+  stop_held(bufnr, buffer_state, 'stop', 'NotebookStyle stop_kernel failed: ', function(callbacks)
     vim.notify('NotebookStyle kernel stopped', vim.log.levels.INFO)
     refresh(bufnr)
     if #callbacks > 0 then
@@ -696,7 +715,7 @@ function M.restart_kernel(bufnr)
   end
 
   -- Runs issued from now on wait for the new kernel.
-  stop_held(bufnr, buffer_state, 'NotebookStyle restart failed to stop kernel: ', function(callbacks)
+  stop_held(bufnr, buffer_state, 'restart', 'NotebookStyle restart failed to stop kernel: ', function(callbacks)
     refresh(bufnr)
     M.start_kernel(bufnr, function()
       run_callbacks(callbacks)
