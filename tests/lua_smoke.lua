@@ -260,7 +260,9 @@ local function process_exited(pid)
 end
 
 -- Shut down every live backend the way Neovim does on exit (stdin EOF, so it
--- kills its kernels) and wait until exec.lua has handled the exit.
+-- kills its kernels) and wait until exec.lua has handled the exit. A backend
+-- that does not exit is killed before the error is raised, so it cannot fail
+-- the later tests' cleanup too.
 local function close_backends()
   local old_notify = vim.notify
   vim.notify = function() end
@@ -272,14 +274,23 @@ local function close_backends()
       client.stdin:close()
     end
   end
-  local closed = vim.wait(10000, function()
+  local function all_handled()
     for _, client in ipairs(live) do
       if not client.exit_handled then
         return false
       end
     end
     return true
-  end, 10)
+  end
+  local closed = vim.wait(10000, all_handled, 10)
+  if not closed then
+    for _, client in ipairs(live) do
+      if not client.exit_handled then
+        pcall(client.handle.kill, client.handle, 'sigkill')
+      end
+    end
+    vim.wait(5000, all_handled, 10)
+  end
   vim.notify = old_notify
   assert_true(closed, 'backend did not exit after stdin EOF')
 end
@@ -1178,11 +1189,12 @@ test('checkhealth looks for kernelspecs where the backend does', function()
     end
   end)
 
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.HOME = old_home
   vim.env.XDG_DATA_HOME = old_xdg
   vim.fn.delete(home, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('a failed backend download keeps the installed backend', function()
@@ -2198,10 +2210,11 @@ test('a kernel that fails to start is reported instead of hanging', function()
     notebook.disable(buf)
     vim.api.nvim_buf_delete(buf, { force = true })
   end
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('deleting or disabling a buffer closes its backend session', function()
@@ -2405,7 +2418,7 @@ test('wiping an unlisted buffer also closes its backend session', function()
   if not ok then error(err, 0) end
 end)
 
-test(':bdelete closes the session of a listed buffer; an unlisted one is only unloaded', function()
+test(':bdelete closes the session of a listed buffer; an unlisted one is only unloaded unless bufhidden=wipe', function()
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')
   local state = require('notebook_style.state')
@@ -2452,6 +2465,18 @@ test(':bdelete closes the session of a listed buffer; an unlisted one is only un
     assert_true(vim.api.nvim_buf_is_valid(buf), 'the unlisted buffer still exists')
     assert_eq(fake.count('close'), 1, 'an unloaded buffer keeps its kernel')
     assert_true(notebook.enabled_buffers[buf], 'and stays enabled')
+
+    -- Unless its 'bufhidden' is wipe: then :bdelete! wipes the unlisted
+    -- buffer out, and its kernel is shut down (documented).
+    buf = python_buffer(false)
+    vim.bo[buf].bufhidden = 'wipe'
+    exec.start_kernel(buf)
+    fake.reply('open_py', nil, { session_id = 'u2' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+    vim.cmd('bdelete! ' .. buf)
+    assert_true(not vim.api.nvim_buf_is_valid(buf), 'the buffer is wiped out')
+    assert_eq(fake.reply('close', nil, { ok = true }).params.session_id, 'u2')
   end)
 
   fake.restore()
@@ -2588,7 +2613,9 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
     assert_true(not client.exit_handled, 'the backend itself must keep running')
   end)
 
-  vim.fn.writefile({}, gate)
+  -- Release a kernel still waiting at the gate. The directory is missing if
+  -- the test failed before creating it; the cleanup below must still run.
+  pcall(vim.fn.writefile, {}, gate)
 
   vim.notify = old_notify
   if buf and vim.api.nvim_buf_is_valid(buf) then
@@ -2670,10 +2697,11 @@ test('a real kernel that dies is reported and replaced on the next run', functio
     notebook.disable(buf)
     vim.api.nvim_buf_delete(buf, { force = true })
   end
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('kernel connection files are private and removed with the kernel', function()
@@ -2735,10 +2763,11 @@ test('kernel connection files are private and removed with the kernel', function
     notebook.disable(buf)
     vim.api.nvim_buf_delete(buf, { force = true })
   end
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('rapid runs reach a real kernel once each and in order', function()
@@ -2808,10 +2837,11 @@ test('rapid runs reach a real kernel once each and in order', function()
     vim.api.nvim_buf_delete(buf, { force = true })
   end
   vim.notify = old_notify
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('a backend exit with requests in flight notifies once and ignores late replies', function()
@@ -3016,10 +3046,11 @@ test('a killed backend is replaced and the buffer keeps executing', function()
     vim.fn.system({ 'kill', pid })
   end
   vim.notify = old_notify
-  close_backends()
+  local closed, close_err = pcall(close_backends)
   vim.env.JUPYTER_PATH = old_jupyter_path
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
+  if not closed then error(close_err, 0) end
 end)
 
 test('plain files execute silently, stream output and plot through the existing kernel', function()

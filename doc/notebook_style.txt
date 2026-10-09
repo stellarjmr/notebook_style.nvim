@@ -175,7 +175,8 @@ are not executable and are skipped by RunCell and RunFile.
     any. The same happens when the buffer leaves the buffer list
     (|:bdelete|, |:bwipeout|) or is wiped out, which includes unlisted
     scratch buffers. A buffer that is only unloaded keeps its kernel;
-    |:bdelete| only unloads an unlisted buffer.
+    |:bdelete| only unloads an unlisted buffer, unless its 'bufhidden' is
+    "wipe".
 
                                                     *:NotebookStyleToggle*
 :NotebookStyleToggle
