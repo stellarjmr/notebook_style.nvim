@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child, Command};
@@ -32,6 +33,8 @@ const MAX_LINE_BYTES: usize = 4096;
 const PORT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Connection attempts after the kernel's ports looked open.
 const CONNECT_ATTEMPTS: usize = 5;
+/// How often to check whether a running kernel's process is still alive.
+const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 type OutputTail = Arc<parking_lot::Mutex<VecDeque<String>>>;
 
@@ -90,6 +93,12 @@ fn pick_ports(n: usize) -> Result<Vec<u16>> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum KernelEvent {
+    /// The kernel process exited by itself (not through `Kernel::kill`).
+    Exited {
+        status: String,
+        /// "; stderr:\n<last lines>" or "" (see `format_tail`).
+        stderr: String,
+    },
     Stream {
         msg_id: String,
         parent_msg_id: Option<String>,
@@ -154,7 +163,9 @@ pub struct Kernel {
     /// Kept for the kernel's lifetime; removed when the kernel is dropped.
     _conn_file: ConnectionFile,
     session: String,
-    child: Mutex<Child>,
+    child: Arc<Mutex<Child>>,
+    /// Set by `kill`, so the exit it causes is not reported as a crash.
+    killed: Arc<AtomicBool>,
     /// Outgoing-frame channel for shell socket (the socket-owning task drains this)
     shell_tx: mpsc::UnboundedSender<ZmqMessage>,
     /// Outgoing-frame channel for control socket
@@ -289,6 +300,14 @@ impl Kernel {
             "shell",
             Some(pending.clone()),
         ));
+        let child = Arc::new(Mutex::new(child));
+        let killed = Arc::new(AtomicBool::new(false));
+        tokio::spawn(watch_exit(
+            Arc::downgrade(&child),
+            killed.clone(),
+            stderr_tail,
+            tx.clone(),
+        ));
         let _ = tokio::spawn(socket_owner(control, control_rx, key, tx, "control", None));
 
         Ok(Self {
@@ -296,7 +315,8 @@ impl Kernel {
             conn,
             _conn_file: conn_file,
             session,
-            child: Mutex::new(child),
+            child,
+            killed,
             shell_tx,
             control_tx,
             iopub_handle,
@@ -452,11 +472,49 @@ impl Kernel {
     }
 
     pub async fn kill(&self) -> Result<()> {
+        self.killed.store(true, Ordering::SeqCst);
         self.iopub_handle.abort();
         let mut child = self.child.lock().await;
         let _ = child.start_kill();
         let _ = child.wait().await;
         Ok(())
+    }
+}
+
+/// Report a kernel process that exits by itself (a crash, an out-of-memory
+/// kill, `os._exit`): its sockets give no sign of it, so the cells it was
+/// running would stay busy forever. Exits caused by `Kernel::kill` are not
+/// reported. Only a weak reference is held, so dropping the kernel still
+/// drops (and kills) its process.
+async fn watch_exit(
+    child: Weak<Mutex<Child>>,
+    killed: Arc<AtomicBool>,
+    stderr_tail: OutputTail,
+    tx: mpsc::UnboundedSender<KernelEvent>,
+) {
+    loop {
+        tokio::time::sleep(EXIT_POLL_INTERVAL).await;
+        let Some(child) = child.upgrade() else {
+            return;
+        };
+        let status = child.lock().await.try_wait();
+        match status {
+            Ok(None) => {}
+            Ok(Some(status)) => {
+                if !killed.load(Ordering::SeqCst) {
+                    tracing::warn!("kernel exited by itself: {status}");
+                    let _ = tx.send(KernelEvent::Exited {
+                        status: status.to_string(),
+                        stderr: format_tail(&stderr_tail),
+                    });
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("cannot check the kernel process: {e}");
+                return;
+            }
+        }
     }
 }
 
@@ -975,6 +1033,89 @@ mod tests {
             elapsed < Duration::from_millis(800),
             "connected after {elapsed:?}"
         );
+    }
+
+    fn watcher(
+        child: &Arc<Mutex<Child>>,
+        killed: &Arc<AtomicBool>,
+        tail: OutputTail,
+    ) -> (
+        tokio::task::JoinHandle<()>,
+        mpsc::UnboundedReceiver<KernelEvent>,
+    ) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = tokio::spawn(watch_exit(Arc::downgrade(child), killed.clone(), tail, tx));
+        (handle, rx)
+    }
+
+    #[tokio::test]
+    async fn watch_exit_reports_a_kernel_that_exits_by_itself() {
+        let _serial = serial();
+        let mut child = Command::new("sh")
+            .args(["-c", "echo 'Fatal Python error: boom' >&2; exit 7"])
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let tail = OutputTail::default();
+        let stderr = child.stderr.take().unwrap();
+        drain_output(stderr, "test".to_string(), "stderr", Some(tail.clone())).await;
+        let child = Arc::new(Mutex::new(child));
+        let (handle, mut rx) = watcher(&child, &Arc::new(AtomicBool::new(false)), tail);
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the exit must be reported")
+            .expect("the watcher must send an event");
+        match event {
+            KernelEvent::Exited { status, stderr } => {
+                assert!(status.contains('7'), "{status}");
+                assert!(stderr.contains("Fatal Python error: boom"), "{stderr}");
+            }
+            other => panic!("unexpected event {other:?}"),
+        }
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn watch_exit_does_not_report_a_kill() {
+        let _serial = serial();
+        let child = Arc::new(Mutex::new(Command::new("sleep").arg("30").spawn().unwrap()));
+        let killed = Arc::new(AtomicBool::new(false));
+        let (handle, mut rx) = watcher(&child, &killed, OutputTail::default());
+        // What Kernel::kill does.
+        killed.store(true, Ordering::SeqCst);
+        {
+            let mut child = child.lock().await;
+            child.start_kill().unwrap();
+            child.wait().await.unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("the watcher must stop")
+            .unwrap();
+        assert!(rx.try_recv().is_err(), "a kill must not be reported");
+    }
+
+    #[tokio::test]
+    async fn watch_exit_stops_with_its_kernel() {
+        let _serial = serial();
+        let child = Arc::new(Mutex::new(
+            Command::new("sleep")
+                .arg("30")
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        ));
+        let (handle, mut rx) = watcher(
+            &child,
+            &Arc::new(AtomicBool::new(false)),
+            OutputTail::default(),
+        );
+        drop(child);
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("the watcher must stop")
+            .unwrap();
+        assert!(rx.try_recv().is_err());
     }
 
     #[cfg(unix)]

@@ -269,6 +269,8 @@ impl Session {
             KernelEvent::UpdateDisplayData { parent_msg_id, .. } => parent_msg_id.clone(),
             KernelEvent::ClearOutput { parent_msg_id, .. } => parent_msg_id.clone(),
             KernelEvent::KernelInfo { parent_msg_id, .. } => parent_msg_id.clone(),
+            // Not a cell event; the event pump reports it (rpc.rs).
+            KernelEvent::Exited { .. } => None,
         }?;
         let cell_id = self.msg_to_cell.get(&parent)?.clone();
 
@@ -372,6 +374,7 @@ impl Session {
             KernelEvent::KernelInfo { info, .. } => {
                 json!({ "kind": "kernel_info", "info": info })
             }
+            KernelEvent::Exited { .. } => return None,
         };
         Some((cell_id, payload))
     }

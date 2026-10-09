@@ -213,7 +213,9 @@ are not executable and are skipped by RunCell and RunFile.
 
     The source is taken when you run the cell. Runs reach the kernel in the
     order you issue them; runs issued while the kernel starts or restarts
-    wait for it instead of starting a second kernel.
+    wait for it instead of starting a second kernel. If the kernel process
+    dies (a crash, an out-of-memory kill), this is reported and the next run
+    starts a new kernel.
 
     A whole-file run without output shows no empty frame, Out[*], running
     placeholder, or automatic kernel-started notification. Failures and

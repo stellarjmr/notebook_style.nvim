@@ -1927,6 +1927,45 @@ test('replies from an exited backend do not disturb the next backend', function(
   end)
 end)
 
+test('a kernel that exits by itself is reported and the next run starts a new one', function()
+  queue_fixture(function(t)
+    local state = require('notebook_style.state')
+    local cells = require('notebook_style.cells')
+    local config = require('notebook_style.config')
+    local list = cells.get_cells(t.buf, cells.find_delimiters(t.buf, config.options.cell_delimiter), 6)
+    t.start('s1')
+    t.run(1)
+    t.fake.reply('update_cell_source', nil, { ok = true })
+    local cell_id = t.fake.reply('execute', nil, {}).params.cell_id
+    t.fake.client.handlers.cell_event({ session_id = 's1', cell_id = cell_id, event = { kind = 'execute_input', execution_count = 1 } })
+    assert_eq(state.status(t.buf, list[1]), 'busy')
+    t.run(2) -- in flight
+    t.run(3) -- queued
+
+    t.fake.client.handlers.kernel_exited({ session_id = 's1', status = 'exit status: 1', stderr = '; stderr:\nFatal Python error: boom' })
+    assert_eq(state.get(t.buf).kernel_started, false, 'the dead kernel must be marked stopped')
+    assert_eq(state.status(t.buf, list[1]), nil, 'its cells must not stay busy')
+    local reports = vim.tbl_filter(function(message)
+      return message:find('the kernel exited (exit status: 1)', 1, true) ~= nil
+    end, t.messages)
+    assert_eq(#reports, 1, 'one report: ' .. vim.inspect(t.messages))
+    assert_true(reports[1]:find('Fatal Python error: boom', 1, true) ~= nil, 'with the kernel stderr: ' .. reports[1])
+
+    -- Run 2's update reply arrives: nothing more goes to the dead kernel.
+    t.fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(t.fake.count('execute'), 1)
+    assert_eq(t.fake.count('update_cell_source'), 2, 'the queued run is dropped')
+
+    -- The next run starts a new kernel in the same session.
+    t.run(1)
+    assert_eq(t.fake.reply('start_kernel', nil, { kernel_name = 'python3' }).params.session_id, 's1')
+    assert_eq(t.fake.count('open_py'), 1)
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'a = 1')
+    assert_no_failures(t.messages)
+  end)
+end)
+
 test('a start cut short by a backend exit does not block later runs', function()
   local notebook = require('notebook_style')
   local exec = require('notebook_style.exec')
@@ -2475,6 +2514,80 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
   vim.fn.delete(project, 'rf')
   if not ok then error(err, 0) end
   if not closed then error(close_err, 0) end
+end)
+
+test('a real kernel that dies is reported and replaced on the next run', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      '# %%', 'print("one")', '# %%', 'import os; os._exit(3)', '# %%', 'print("three")',
+    })
+    local list = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 6)
+    local function output(i)
+      local outputs = state.outputs(buf, list[i])
+      return outputs[1] and outputs[1].text
+    end
+    local function run(i)
+      vim.api.nvim_win_set_cursor(0, { 2 * i, 0 })
+      exec.run_cell(buf)
+    end
+
+    run(1)
+    assert_true(vim.wait(20000, function() return output(1) == 'one\n' end, 10), 'run failed: ' .. vim.inspect(messages))
+    run(2)
+    local function report()
+      for _, message in ipairs(messages) do
+        if message:find('the kernel exited', 1, true) then
+          return message
+        end
+      end
+    end
+    assert_true(vim.wait(10000, function() return report() ~= nil end, 20), 'the dead kernel must be reported: ' .. vim.inspect(messages))
+    assert_true(report():find('exit status: 3', 1, true) ~= nil, report())
+    assert_eq(state.get(buf).kernel_started, false)
+    assert_eq(state.status(buf, list[2]), nil, 'the cell must not stay busy')
+
+    run(3)
+    assert_true(vim.wait(20000, function() return output(3) == 'three\n' end, 10), 'the next run must start a new kernel: ' .. vim.inspect(messages))
+  end)
+
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  close_backends()
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
 end)
 
 test('kernel connection files are private and removed with the kernel', function()

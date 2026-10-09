@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
-use crate::kernel::Kernel;
+use crate::kernel::{Kernel, KernelEvent};
 use crate::kernelspec;
 use crate::kitty::KittyTty;
 use crate::notebook::CellType;
@@ -329,6 +329,7 @@ impl Server {
         let cwd = session.path.parent().map(|p| p.to_path_buf());
         let kernel = Kernel::launch(spec, cwd).await?;
         let kernel_name = kernel.spec().name.clone();
+        let kernel_id = kernel.session().to_string();
         let mut rx = kernel
             .take_events()
             .await
@@ -352,6 +353,29 @@ impl Server {
         let sid_clone = sid.clone();
         tokio::spawn(async move {
             while let Some(ev) = rx.recv().await {
+                if let KernelEvent::Exited { status, stderr } = &ev {
+                    // The kernel died by itself: drop it, so later requests
+                    // fail at once instead of waiting on it, and tell the
+                    // frontend. A kernel that replaced it stays.
+                    let dead = {
+                        let mut slot = session_clone.kernel.write().await;
+                        if slot.as_ref().is_some_and(|k| k.session() == kernel_id) {
+                            slot.take()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(k) = dead {
+                        let _ = k.kill().await;
+                    }
+                    let note = json!({
+                        "session_id": sid_clone,
+                        "status": status,
+                        "stderr": stderr,
+                    });
+                    server.notify("kernel_exited", note).await;
+                    continue;
+                }
                 if let Some((cell_id, payload)) = session_clone.apply_event(&ev) {
                     let note = json!({
                         "session_id": sid_clone,

@@ -119,6 +119,26 @@ local function on_backend_exit(exited_client, code, signal)
   )
 end
 
+--- The kernel process exited by itself (a crash, an out-of-memory kill,
+--- `os._exit`): cells it was running will never finish. The backend has
+--- dropped it, so mark it stopped (the next run starts a new kernel in the
+--- same session) and drop the runs that were waiting for it.
+local function on_kernel_exit(bufnr, payload)
+  local buffer_state = state.get(bufnr)
+  buffer_state.kernel_started = false
+  buffer_state.run_queue = nil
+  state.clear_statuses(bufnr)
+  refresh(bufnr, { preserve_visibility = true })
+  vim.notify(
+    string.format(
+      'NotebookStyle: the kernel exited (%s); the next run starts a new kernel%s',
+      tostring(payload.status),
+      payload.stderr or ''
+    ),
+    vim.log.levels.WARN
+  )
+end
+
 --- Report a failed backend request, except when the backend itself is gone:
 --- on_backend_exit reports that once for every request in flight.
 local function notify_failure(message, err)
@@ -159,6 +179,14 @@ local function ensure_client()
       end)
     end
     refresh(bufnr)
+  end)
+
+  client:on('kernel_exited', function(args)
+    local payload = args[1] or args
+    local bufnr = payload and payload.session_id and session_to_buf[payload.session_id]
+    if bufnr then
+      on_kernel_exit(bufnr, payload)
+    end
   end)
 
   return client
