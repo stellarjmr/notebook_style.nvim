@@ -1314,9 +1314,11 @@ test('runs issued during kernel startup share one session and keep their order',
     fake.reply('start_kernel', nil, { kernel_name = 'python3' })
     assert_eq(fake.count('update_cell_source'), 0, 'runs wait until the kernel setup code was sent')
     fake.reply('execute_silent', nil, { msg_id = 'setup' })
+    assert_eq(fake.count('update_cell_source'), 1, 'one run is sent at a time')
 
     local first = fake.reply('update_cell_source', nil, { ok = true })
     assert_eq(first.params.source, 'a = 1')
+    assert_eq(fake.count('update_cell_source'), 1, 'the next run waits for the execute reply')
     fake.reply('execute', nil, { msg_id = 'm1' })
     assert_eq(fake.count('update_cell_source'), 2, 'the next run is sent once the previous one reached the kernel')
     local second = fake.reply('update_cell_source', nil, { ok = true })
@@ -1388,6 +1390,188 @@ test('a restart holds new runs for the new kernel and a failed start drops them'
     vim.api.nvim_buf_delete(buf, { force = true })
   end
   if not ok then error(err, 0) end
+end)
+
+-- Fake-backend fixture for the run queue tests: a buffer with three cells
+-- (a = 1, b = 2, c = 3) and `run(n)` running the n-th cell.
+local function queue_fixture(fn)
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'a = 1', '# %%', 'b = 2', '# %%', 'c = 3' })
+    local function run(n)
+      vim.api.nvim_win_set_cursor(0, { 2 * n, 0 })
+      exec.run_cell(buf)
+    end
+    local function start(session_id)
+      exec.start_kernel(buf)
+      fake.reply('open_py', nil, { session_id = session_id })
+      fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+      fake.reply('execute_silent', nil, {})
+    end
+    fn({ exec = exec, fake = fake, buf = buf, run = run, start = start, messages = messages })
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end
+
+local function assert_no_failures(messages)
+  for _, message in ipairs(messages) do
+    assert_true(not message:find('failed', 1, true), 'no request may fail: ' .. vim.inspect(messages))
+  end
+end
+
+test('a stop waits for the run in flight and drops the runs not sent yet', function()
+  queue_fixture(function(t)
+    t.start('s1')
+    t.run(1)
+    t.run(2)
+    t.exec.stop_kernel(t.buf)
+    t.run(3)
+    assert_eq(t.fake.count('stop_kernel'), 0, 'the stop waits for the run in flight')
+    assert_eq(t.fake.count('update_cell_source'), 1, 'a run issued after the stop must not be sent alongside it')
+    t.fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(t.fake.count('execute'), 0, 'a run dropped by the stop must not go on to execute')
+    assert_eq(t.fake.count('update_cell_source'), 1, 'nothing is sent while the kernel stops')
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    -- The run issued during the stop starts a new kernel, as any run would.
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'c = 3', 'only the run issued after the stop is sent')
+    t.fake.reply('execute', nil, {})
+    assert_eq(t.fake.count('update_cell_source'), 2)
+    assert_no_failures(t.messages)
+  end)
+end)
+
+test('a restart lets the run in flight reach the old kernel first', function()
+  queue_fixture(function(t)
+    t.start('s1')
+    t.run(1)
+    t.exec.restart_kernel(t.buf)
+    t.run(2)
+    t.fake.reply('update_cell_source', nil, { ok = true })
+    assert_eq(t.fake.count('stop_kernel'), 0, 'the restart waits for the run in flight')
+    assert_eq(t.fake.reply('execute', nil, {}).params.session_id, 's1')
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(t.fake.count('update_cell_source'), 1, 'the run issued during the restart waits for the new kernel')
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'b = 2')
+    t.fake.reply('execute', nil, {})
+    assert_eq(t.fake.count('execute'), 2)
+    assert_no_failures(t.messages)
+  end)
+end)
+
+test('stopping a kernel that is still starting drops the queued runs', function()
+  queue_fixture(function(t)
+    -- Before the session exists (open_py in flight).
+    t.run(1)
+    t.run(2)
+    t.exec.stop_kernel(t.buf)
+    t.fake.reply('open_py', nil, { session_id = 's1' })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.count('update_cell_source'), 0, 'runs issued before the stop must not be sent')
+
+    -- With a session, while start_kernel is in flight. The start itself is not
+    -- cancelled, so no stop request is sent for it.
+    t.exec.stop_kernel(t.buf)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    t.run(1)
+    t.exec.stop_kernel(t.buf)
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.count('update_cell_source'), 0, 'a run issued before the stop must not be sent')
+    assert_eq(t.fake.count('stop_kernel'), 1)
+  end)
+end)
+
+test('a backend exit ends starts in flight and drops the runs waiting for them', function()
+  queue_fixture(function(t)
+    -- open_py in flight: the start has no session yet. A run issued after the
+    -- exit was handled, but before the dead request's reply is read, must not
+    -- join the dead start.
+    t.run(1)
+    t.fake.exit(nil, 9, { replies_after_exit = true })
+    t.run(2)
+    assert_eq(t.fake.count('open_py'), 2, 'a run after the exit must start again on a new backend')
+    t.fake.reply('open_py', 'notebook-style-core exited', nil)
+    t.fake.reply('open_py', nil, { session_id = 's2' })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'b = 2', 'only the run issued after the exit is sent')
+    t.fake.reply('execute', nil, {})
+
+    -- start_kernel in flight on an existing session: the same.
+    t.exec.stop_kernel(t.buf)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    t.run(1)
+    t.fake.exit(nil, 9, { replies_after_exit = true })
+    t.run(3)
+    assert_eq(t.fake.count('open_py'), 3, 'a run after the exit must open a new session')
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('open_py', nil, { session_id = 's3' })
+    assert_eq(t.fake.reply('start_kernel', nil, { kernel_name = 'python3' }).params.session_id, 's3')
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'c = 3', 'runs queued before the exit are dropped')
+    t.fake.reply('execute', nil, {})
+    assert_eq(t.fake.count('update_cell_source'), 2)
+  end)
+end)
+
+test('callers waiting for a restart or stop are called once a kernel serves them', function()
+  queue_fixture(function(t)
+    t.start('s1')
+    local calls = 0
+    local function waiter()
+      calls = calls + 1
+    end
+
+    t.exec.restart_kernel(t.buf)
+    t.exec.start_kernel(t.buf, waiter)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(calls, 0, 'not before the new kernel is set up')
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(calls, 1, 'once the new kernel is up')
+
+    t.exec.restart_kernel(t.buf)
+    t.exec.start_kernel(t.buf, waiter)
+    t.fake.reply('stop_kernel', 'stop failed', nil)
+    assert_eq(calls, 2, 'at once when the old kernel keeps running')
+    assert_eq(t.fake.count('start_kernel'), 2, 'no new kernel after a failed stop')
+
+    t.exec.stop_kernel(t.buf)
+    t.exec.start_kernel(t.buf, waiter)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(calls, 3, 'a start requested during a stop starts a new kernel')
+
+    -- Also without a callback (:NotebookStyleKernelStart, or a restart).
+    t.exec.stop_kernel(t.buf)
+    t.exec.start_kernel(t.buf)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    assert_eq(t.fake.count('start_kernel'), 4, 'a start requested during a stop is not lost')
+  end)
 end)
 
 test('a start cut short by a backend exit does not block later runs', function()

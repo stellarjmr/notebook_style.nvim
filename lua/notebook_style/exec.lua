@@ -98,6 +98,12 @@ local function on_backend_exit(exited_client, code, signal)
     session_to_buf[session_id] = nil
     affected[bufnr] = true
   end
+  -- A start still waiting for open_py has no session yet.
+  for bufnr, buffer_state in state.each() do
+    if buffer_state.starting and buffer_state.starting.client == exited_client then
+      affected[bufnr] = true
+    end
+  end
   for bufnr in pairs(affected) do
     state.reset_kernel(bufnr)
     refresh(bufnr, { preserve_visibility = true })
@@ -264,41 +270,50 @@ end
 --- they were issued. The backend handles every request on its own task, so
 --- requests in flight together can reach the kernel in any order; the
 --- `execute` reply arrives once the request is queued for the kernel, so the
---- next run is sent only after it. Nothing is sent while a kernel start is in
---- flight; finishing the start pumps again.
+--- next run is sent only after it. A buffer has at most one run in flight,
+--- even after its queue was dropped. Nothing is sent while a kernel start or
+--- stop is in flight; finishing it pumps again.
 local function pump(bufnr)
   local buffer_state = state.get(bufnr)
   local queue = buffer_state.run_queue
-  if not queue or queue.in_flight or #queue == 0 or buffer_state.starting then
+  if not queue or #queue == 0 or buffer_state.in_flight or buffer_state.starting then
     return
   end
 
   local cl = client_for(buffer_state)
   local run = table.remove(queue, 1)
-  queue.in_flight = true
+  local flight = { waiters = {} }
+  buffer_state.in_flight = flight
 
-  local function done(err)
-    if buffer_state.run_queue ~= queue then
-      return -- dropped meanwhile: kernel stopped, buffer reset or disabled
-    end
-    queue.in_flight = false
-    if err then
-      -- The remaining runs would fail the same way; report it only once.
-      buffer_state.run_queue = nil
-      return
-    end
-    pump(bufnr)
+  -- Dropped meanwhile: kernel stopped, buffer reset or shut down, or the
+  -- backend exited (on_backend_exit has told the user).
+  local function discarded()
+    return buffer_state.run_queue ~= queue or cl ~= client
   end
 
-  -- Replies from a backend that has exited meanwhile only release the queue:
-  -- on_backend_exit has already reset the buffer and told the user.
+  local function done(err)
+    if buffer_state.in_flight == flight then
+      buffer_state.in_flight = nil
+    end
+    if err and not discarded() then
+      -- The remaining runs would fail the same way; report it only once.
+      buffer_state.run_queue = nil
+    end
+    for _, waiter in ipairs(flight.waiters) do
+      waiter()
+    end
+    if buffer_state.run_queue then
+      pump(bufnr)
+    end
+  end
+
   cl:call('update_cell_source', {
     session_id = buffer_state.session_id,
     cell_id = run.cell_id,
     source = run.source,
   }, function(err)
-    if cl ~= client then
-      done('backend exited')
+    if discarded() then
+      done()
       return
     end
     if err then
@@ -311,16 +326,28 @@ local function pump(bufnr)
       session_id = buffer_state.session_id,
       cell_id = run.cell_id,
     }, function(exec_err)
-      if cl ~= client then
-        done('backend exited')
-        return
-      end
-      if exec_err then
+      if exec_err and not discarded() then
         notify_failure('NotebookStyle execute failed: ', exec_err)
       end
       done(exec_err)
     end)
   end)
+end
+
+--- Call `fn` once the buffer's run in flight, if any, has finished: a kernel
+--- stop sent earlier could overtake that run's `execute` in the backend.
+local function after_run_in_flight(buffer_state, fn)
+  if buffer_state.in_flight then
+    table.insert(buffer_state.in_flight.waiters, fn)
+  else
+    fn()
+  end
+end
+
+local function run_callbacks(callbacks)
+  for _, callback in ipairs(callbacks) do
+    callback()
+  end
 end
 
 local function clear_output_images(outputs)
@@ -431,23 +458,22 @@ local function finish_start(bufnr, buffer_state, start, ok)
     buffer_state.run_queue = nil
     return
   end
-  for _, callback in ipairs(start.callbacks) do
-    callback()
-  end
+  run_callbacks(start.callbacks)
   pump(bufnr)
 end
 
 --- Start the buffer's kernel, then call `callback`. While a start is in
 --- flight, later calls wait for it instead of opening another session and
---- kernel for the same buffer.
+--- kernel for the same buffer; while a kernel stops, they wait for the stop
+--- and then start a kernel.
 function M.start_kernel(bufnr, callback, quiet)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local buffer_state = state.get(bufnr)
 
   if buffer_state.starting then
-    if callback then
-      table.insert(buffer_state.starting.callbacks, callback)
-    end
+    -- Recorded even without a callback: a kernel stop in flight then starts
+    -- a kernel once it is done.
+    table.insert(buffer_state.starting.callbacks, callback or function() end)
     return
   end
 
@@ -470,7 +496,7 @@ function M.start_kernel(bufnr, callback, quiet)
     end
   end
 
-  local start = { callbacks = {} }
+  local start = { callbacks = {}, client = cl }
   if callback then
     table.insert(start.callbacks, callback)
   end
@@ -521,8 +547,8 @@ function M.start_kernel(bufnr, callback, quiet)
 
   cl:call('open_py', { path = path ~= '' and path or (cwd .. '/untitled.py') }, function(err, result)
     if cl ~= client then
-      -- No session was registered yet, so the exit reset could not see this
-      -- start: end it here, quietly.
+      -- The backend exited meanwhile: end this start quietly (a no-op once
+      -- the exit reset the buffer, which also covers starts without session).
       finish_start(bufnr, buffer_state, start, false)
       return
     end
@@ -581,28 +607,62 @@ function M.clear_outputs(bufnr)
   refresh(bufnr, { preserve_visibility = true })
 end
 
+--- Stop the buffer's kernel once its run in flight, if any, has finished.
+--- Until the stop completes, runs and start_kernel callers wait as during a
+--- start; `after_stop(callbacks)` then gets the waiting callers. If the stop
+--- fails, the kernel keeps running and serves them.
+local function stop_held(bufnr, buffer_state, failure_message, after_stop)
+  local session_id = buffer_state.session_id
+  local cl = ensure_client()
+  local hold = { callbacks = {}, client = cl }
+  buffer_state.starting = hold
+
+  after_run_in_flight(buffer_state, function()
+    if buffer_state.starting ~= hold then
+      return -- reset or shut down meanwhile
+    end
+    cl:call('stop_kernel', { session_id = session_id }, function(err)
+      if buffer_state.starting ~= hold then
+        return
+      end
+      buffer_state.starting = nil
+      if cl ~= client then
+        buffer_state.run_queue = nil
+        return
+      end
+      if err then
+        notify_failure(failure_message, err)
+        run_callbacks(hold.callbacks)
+        pump(bufnr)
+        return
+      end
+      buffer_state.kernel_started = false
+      state.clear_statuses(bufnr)
+      after_stop(hold.callbacks)
+    end)
+  end)
+end
+
 function M.stop_kernel(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   local buffer_state = state.get(bufnr)
-  if not buffer_state.session_id then
-    return
-  end
-
   -- Runs that have not reached the kernel yet are dropped with it.
   buffer_state.run_queue = nil
-  local cl = ensure_client()
-  cl:call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
-    if cl ~= client then
-      return
-    end
-    if err then
-      notify_failure('NotebookStyle stop_kernel failed: ', err)
-      return
-    end
-    buffer_state.kernel_started = false
-    state.clear_statuses(bufnr)
+  if buffer_state.starting or not buffer_state.session_id then
+    return -- a start or restart in flight is not cancelled
+  end
+
+  stop_held(bufnr, buffer_state, 'NotebookStyle stop_kernel failed: ', function(callbacks)
     vim.notify('NotebookStyle kernel stopped', vim.log.levels.INFO)
     refresh(bufnr)
+    if #callbacks > 0 then
+      -- Runs or a start were requested while the kernel stopped.
+      M.start_kernel(bufnr, function()
+        run_callbacks(callbacks)
+      end)
+    else
+      pump(bufnr)
+    end
   end)
 end
 
@@ -635,28 +695,12 @@ function M.restart_kernel(bufnr)
     return
   end
 
-  -- Hold runs issued while the old kernel stops for the new one.
-  local start = { callbacks = {} }
-  buffer_state.starting = start
-  local cl = ensure_client()
-  cl:call('stop_kernel', { session_id = buffer_state.session_id }, function(err)
-    if buffer_state.starting ~= start then
-      return
-    end
-    buffer_state.starting = nil
-    if cl ~= client then
-      buffer_state.run_queue = nil
-      return
-    end
-    if err then
-      notify_failure('NotebookStyle restart failed to stop kernel: ', err)
-      pump(bufnr) -- the old kernel keeps serving the held runs
-      return
-    end
-    buffer_state.kernel_started = false
-    state.clear_statuses(bufnr)
+  -- Runs issued from now on wait for the new kernel.
+  stop_held(bufnr, buffer_state, 'NotebookStyle restart failed to stop kernel: ', function(callbacks)
     refresh(bufnr)
-    M.start_kernel(bufnr)
+    M.start_kernel(bufnr, function()
+      run_callbacks(callbacks)
+    end)
   end)
 end
 

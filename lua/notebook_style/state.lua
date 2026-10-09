@@ -22,8 +22,9 @@ local function default_buffer_state()
   return {
     session_id = nil,
     kernel_started = false,
-    starting = nil,  -- kernel start in flight: { callbacks = { ... } }
+    starting = nil,  -- kernel start or stop in flight: { callbacks = { ... }, client = ... }
     run_queue = nil,  -- runs not yet sent to the kernel, oldest first
+    in_flight = nil,  -- run whose requests are in flight: { waiters = { ... } }
     selected_kernel_name = nil,
     mark_delimiters = {},  -- extmark id -> last delimiter text seen on that mark
     active_cells = {},  -- cell id -> true while its identity mark exists
@@ -37,6 +38,11 @@ function M.get(bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   buffers[bufnr] = buffers[bufnr] or default_buffer_state()
   return buffers[bufnr]
+end
+
+--- Iterate over the buffers that have state: `for bufnr, buffer_state in M.each() do`.
+function M.each()
+  return pairs(buffers)
 end
 
 function M.clear(bufnr)
@@ -212,6 +218,7 @@ function M.reset_kernel(bufnr)
   state.kernel_started = false
   state.starting = nil
   state.run_queue = nil
+  state.in_flight = nil
   state.statuses = {}
 end
 

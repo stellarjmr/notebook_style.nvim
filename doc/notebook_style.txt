@@ -277,7 +277,9 @@ are not executable and are skipped by RunCell and RunFile.
                                                     *:NotebookStyleKernelStop*
 :NotebookStyleKernelStop
     Stop the Python Jupyter kernel for the current buffer. Runs that have not
-    reached the kernel yet are discarded.
+    reached the kernel yet are discarded; runs issued while the kernel stops
+    wait for the stop and then start a new kernel as usual. While a kernel is
+    still starting or restarting, this only discards the queued runs.
 
                                                *:NotebookStyleKernelInterrupt*
 :NotebookStyleKernelInterrupt
