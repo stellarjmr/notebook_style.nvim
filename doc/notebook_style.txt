@@ -172,7 +172,10 @@ are not executable and are skipped by RunCell and RunFile.
                                                     *:NotebookStyleDisable*
 :NotebookStyleDisable
     Disable the plugin for the current buffer and shut down its kernel, if
-    any. Deleting or wiping the buffer does the same.
+    any. The same happens when the buffer leaves the buffer list
+    (|:bdelete|, |:bwipeout|) or is wiped out, which includes unlisted
+    scratch buffers. A buffer that is only unloaded keeps its kernel;
+    |:bdelete| only unloads an unlisted buffer.
 
                                                     *:NotebookStyleToggle*
 :NotebookStyleToggle

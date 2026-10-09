@@ -2141,6 +2141,67 @@ test('wiping an unlisted buffer also closes its backend session', function()
   if not ok then error(err, 0) end
 end)
 
+test(':bdelete closes the session of a listed buffer; an unlisted one is only unloaded', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local old_notify = vim.notify
+  local fake = fake_backend()
+  local bufs = {}
+
+  local function python_buffer(listed)
+    local buf = vim.api.nvim_create_buf(listed, not listed)
+    table.insert(bufs, buf)
+    if listed then
+      vim.api.nvim_buf_set_name(buf, vim.fn.tempname() .. '.py')
+    end
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'x = 1' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    return buf
+  end
+
+  local ok, err = pcall(function()
+    vim.notify = function() end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+
+    -- A listed buffer deleted with :bdelete! while its kernel launches: the
+    -- session is closed once the launch completes and the run is not sent.
+    local buf = python_buffer(true)
+    exec.run_cell(buf)
+    fake.reply('open_py', nil, { session_id = 'l1' })
+    vim.cmd('bdelete! ' .. buf)
+    assert_eq(fake.count('close'), 0, 'no close while the kernel launches')
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    assert_eq(fake.reply('close', nil, { ok = true }).params.session_id, 'l1')
+    assert_eq(fake.count('update_cell_source'), 0, 'the run of a deleted buffer is not sent')
+
+    -- :bdelete! on an unlisted buffer only unloads it: like any unloaded
+    -- buffer it keeps its kernel (documented).
+    buf = python_buffer(false)
+    exec.start_kernel(buf)
+    fake.reply('open_py', nil, { session_id = 'u1' })
+    fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    fake.reply('execute_silent', nil, {})
+    vim.cmd('bdelete! ' .. buf)
+    assert_true(vim.api.nvim_buf_is_valid(buf), 'the unlisted buffer still exists')
+    assert_eq(fake.count('close'), 1, 'an unloaded buffer keeps its kernel')
+    assert_true(notebook.enabled_buffers[buf], 'and stays enabled')
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  for _, b in ipairs(bufs) do
+    if vim.api.nvim_buf_is_valid(b) then
+      pcall(notebook.disable, b)
+      pcall(vim.api.nvim_buf_delete, b, { force = true })
+    end
+    state.clear(b)
+  end
+  if not ok then error(err, 0) end
+end)
+
 test('deleting a buffer stops its real kernel process', function()
   local backend = backend_path()
   local python = vim.fn.exepath('python3')
@@ -2220,10 +2281,17 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
   local old_jupyter_path = vim.env.JUPYTER_PATH
   local buf
 
+  local gate = project .. '/gate'
+
   local ok, err = pcall(function()
     assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    -- The kernel waits for a gate file before it starts, so the buffer is
+    -- certainly deleted while start_kernel is still in flight.
     vim.fn.writefile({ vim.fn.json_encode({
-      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      argv = {
+        'sh', '-c', 'while [ ! -e "$1" ]; do sleep 0.05; done; exec "$2" -m ipykernel_launcher -f "$3"',
+        'sh', gate, python, '{connection_file}',
+      },
       display_name = 'NotebookStyle smoke test', language = 'python',
     }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
     vim.env.JUPYTER_PATH = project
@@ -2237,8 +2305,6 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
     vim.api.nvim_win_set_cursor(0, { 2, 0 })
     exec.run_cell(buf)
 
-    -- Catch the start while the backend launches the kernel: the kernel
-    -- process exists, its start_kernel request is unanswered.
     local client = backends[#backends]
     local kernel_pid
     assert_true(vim.wait(20000, function()
@@ -2248,13 +2314,17 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
       end
       kernel_pid = vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(client.pid) }))
       return kernel_pid:match('^%d+$') ~= nil
-    end, 2), 'did not see the kernel launching')
+    end, 10), 'did not see the kernel launching')
     vim.api.nvim_buf_delete(buf, { force = true })
     buf = nil
-    -- The session is closed once the launch completes, which kills the kernel.
-    assert_true(vim.wait(10000, function() return not process_alive(kernel_pid) end, 50), 'the kernel launched for a deleted buffer kept running')
+    -- Let the kernel start (the wrapper execs it, keeping its pid). Its
+    -- session is closed once the launch completes, which kills it.
+    vim.fn.writefile({}, gate)
+    assert_true(vim.wait(20000, function() return not process_alive(kernel_pid) end, 50), 'the kernel launched for a deleted buffer kept running')
     assert_true(not client.exit_handled, 'the backend itself must keep running')
   end)
+
+  vim.fn.writefile({}, gate)
 
   vim.notify = old_notify
   if buf and vim.api.nvim_buf_is_valid(buf) then
