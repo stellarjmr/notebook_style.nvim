@@ -147,11 +147,28 @@ local function process_cr(text)
   return table.concat(out, '\n')
 end
 
+--- Byte length of the character at byte `i`, split the way Neovim splits
+--- text (utf_ptr2len): a byte that does not start a complete UTF-8 sequence
+--- is a character of its own (displayed like <a9>). Output text is UTF-8,
+--- but strip_ansi removes an escape and the following byte, which can be the
+--- first byte of a multibyte character.
+local function char_len(text, i)
+  local b = text:byte(i)
+  local n = b < 0xC0 and 1 or b < 0xE0 and 2 or b < 0xF0 and 3 or b < 0xF8 and 4 or b < 0xFC and 5 or b < 0xFE and 6 or 1
+  for k = 1, n - 1 do
+    local c = text:byte(i + k)
+    if not c or c < 0x80 or c > 0xBF then
+      return 1
+    end
+  end
+  return n
+end
+
 --- Split a line into rows of at most `width` display cells, returning no more
---- than `limit` rows. The work is proportional to the part of the line that
---- is returned, so a huge single-line output stops at the row budget instead
---- of being wrapped whole on every render. A character wider than `width`
---- gets a row of its own. Output text is valid UTF-8 (it comes from JSON).
+--- than `limit` rows. Only the part of the line that is returned is split
+--- into rows, so a huge single-line output is no longer wrapped whole (in
+--- quadratic time) on every render. A character wider than `width` gets a
+--- row of its own.
 local function wrap_line(line, width, limit)
   if width <= 0 or vim.fn.strdisplaywidth(line) <= width then
     return { line }
@@ -171,7 +188,11 @@ local function wrap_line(line, width, limit)
 
   local char_widths = {}
   local row, row_width = {}, 0
-  for char in line:gmatch('[^\128-\191][\128-\191]*') do
+  local i = 1
+  while i <= #line do
+    local len = char_len(line, i)
+    local char = line:sub(i, i + len - 1)
+    i = i + len
     local char_width = char_widths[char]
     if not char_width then
       char_width = vim.fn.strdisplaywidth(char)

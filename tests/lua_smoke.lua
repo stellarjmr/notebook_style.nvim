@@ -728,6 +728,8 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
   local cells = require('notebook_style.cells')
   local config = require('notebook_style.config')
   local buf = vim.api.nvim_create_buf(false, true)
+  local first_win = vim.api.nvim_get_current_win()
+  local split_win
 
   local ok, err = pcall(function()
     notebook.setup({ keymaps = false, output_max_lines = 6 })
@@ -735,14 +737,11 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print(1)' })
     local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
     local id = state.cell_id(buf, cell)
-    -- Output text gets the frame width minus the side borders and padding.
-    local text_width = vim.api.nvim_win_get_width(0) - 4
-    local half = math.floor(text_width / 2)
 
-    local function output_rows(text)
+    local function output_rows(text, win)
       state.apply_event(buf, id, { kind = 'execute_input', execution_count = 1 })
       state.apply_event(buf, id, { kind = 'stream', name = 'stdout', text = text })
-      render.render_all(buf, { cell }, 'n', vim.api.nvim_get_current_win())
+      render.render_all(buf, { cell }, 'n', win)
       for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, render.ns, 0, -1, { details = true })) do
         local lines = mark[4].virt_lines
         if lines then
@@ -756,38 +755,69 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
       error('no output frame rendered')
     end
 
-    local rows = output_rows(string.rep('x', 2 * text_width + 5) .. '\n')
-    assert_eq(#rows, 3)
-    assert_eq(rows[1], string.rep('x', text_width))
-    assert_eq(rows[2], string.rep('x', text_width))
-    assert_eq(rows[3], 'xxxxx')
+    -- Expectations follow from the text width (frame width minus the side
+    -- borders and padding); check an even and an odd one.
+    local function check(win)
+      local text_width = vim.api.nvim_win_get_width(win) - 4
+      local half = math.floor(text_width / 2)
+      local label = ' (text width ' .. text_width .. ')'
 
-    rows = output_rows(string.rep('中', text_width) .. '\n')
-    assert_eq(rows[1], string.rep('中', half), 'double-width characters fill rows by display cells')
-    assert_eq(#rows, 2)
+      local rows = output_rows(string.rep('x', 2 * text_width + 5) .. '\n', win)
+      assert_eq(#rows, 3, 'ASCII rows' .. label)
+      assert_eq(rows[1], string.rep('x', text_width))
+      assert_eq(rows[2], string.rep('x', text_width))
+      assert_eq(rows[3], 'xxxxx')
 
-    -- After a one-cell character, a double-width one that would overflow the
-    -- row moves to the next row.
-    local fit = math.floor((text_width - 1) / 2)
-    rows = output_rows('a' .. string.rep('中', half) .. '\n')
-    assert_eq(rows[1], 'a' .. string.rep('中', fit))
-    assert_eq(rows[2], string.rep('中', half - fit))
+      rows = output_rows(string.rep('中', text_width) .. '\n', win)
+      assert_eq(rows[1], string.rep('中', half), 'double-width characters fill rows by display cells' .. label)
+      assert_eq(#rows, math.ceil(text_width / half), 'double-width rows' .. label)
 
-    rows = output_rows(string.rep('y', 100 * text_width) .. '\n')
-    assert_eq(#rows, 7, 'six output rows plus the truncation marker')
-    assert_eq(rows[6], string.rep('y', text_width))
-    assert_true(rows[7]:find('output truncated', 1, true) ~= nil, rows[7])
+      -- After a one-cell character, the double-width character that would
+      -- overflow the row moves to the next row.
+      local fit = math.floor((text_width - 1) / 2)
+      rows = output_rows('a' .. string.rep('中', fit + 1) .. '\n', win)
+      assert_eq(rows[1], 'a' .. string.rep('中', fit), 'mixed widths' .. label)
+      assert_eq(rows[2], '中', 'mixed widths' .. label)
+
+      -- strip_ansi removes ESC and one byte, which can leave a byte of a
+      -- multibyte character behind; it still takes its four cells, shown as
+      -- <a9> (Neovim stores it in the extmark text that way).
+      rows = output_rows('\27é' .. string.rep('x', text_width) .. '\n', win)
+      assert_eq(rows[1], '<a9>' .. string.rep('x', text_width - 4), 'a leftover byte keeps its cells' .. label)
+      assert_eq(rows[2], 'xxxx')
+
+      rows = output_rows(string.rep('y', 100 * text_width) .. '\n', win)
+      assert_eq(#rows, 7, 'six output rows plus the truncation marker' .. label)
+      assert_eq(rows[6], string.rep('y', text_width))
+      assert_true(rows[7]:find('output truncated', 1, true) ~= nil, rows[7])
+
+      rows = output_rows(string.rep('中', 100 * text_width) .. '\n', win)
+      assert_eq(#rows, 7, 'the row budget also stops double-width text' .. label)
+      assert_eq(rows[6], string.rep('中', half))
+    end
+
+    check(first_win)
+    vim.cmd('vsplit')
+    split_win = vim.api.nvim_get_current_win()
+    local parity = (vim.api.nvim_win_get_width(first_win) - 4) % 2
+    vim.api.nvim_win_set_width(split_win, parity == 0 and 41 or 40)
+    check(split_win)
 
     -- Wrapping must stop at the row budget: a 100K-character line used to take
     -- seconds per render because the whole line was wrapped every time.
     local uv = vim.uv or vim.loop
     local started = uv.hrtime()
-    rows = output_rows(string.rep('z', 100000) .. '\n')
+    local rows = output_rows(string.rep('z', 100000) .. '\n', first_win)
     local elapsed_ms = (uv.hrtime() - started) / 1e6
     assert_eq(#rows, 7)
     assert_true(elapsed_ms < 1000, string.format('rendering a 100K-character line took %.0f ms', elapsed_ms))
   end)
 
+  if split_win and vim.api.nvim_win_is_valid(split_win) then
+    vim.api.nvim_win_close(split_win, true)
+  end
+  vim.api.nvim_set_current_win(first_win)
+  state.clear(buf)
   vim.api.nvim_buf_delete(buf, { force = true })
   if not ok then error(err, 0) end
 end)
