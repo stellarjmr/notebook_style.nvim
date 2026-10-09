@@ -36,7 +36,27 @@ const CONNECT_ATTEMPTS: usize = 5;
 /// How often to check whether a running kernel's process is still alive.
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-type OutputTail = Arc<parking_lot::Mutex<VecDeque<String>>>;
+/// The last lines of a kernel's stderr, plus the line it is still writing.
+#[derive(Default)]
+struct Tail {
+    lines: VecDeque<String>,
+    partial: String,
+}
+
+type OutputTail = Arc<parking_lot::Mutex<Tail>>;
+
+/// Lossy UTF-8 text of a kernel output line, at most MAX_LINE_BYTES long.
+fn line_text(line: &[u8]) -> String {
+    let mut text = String::from_utf8_lossy(line)
+        .trim_end_matches('\r')
+        .to_string();
+    // A cut multibyte character becomes U+FFFD, which can make the text
+    // longer than the bytes it came from.
+    while text.len() > MAX_LINE_BYTES {
+        text.pop();
+    }
+    text
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfo {
@@ -257,7 +277,9 @@ impl Kernel {
         // connection against the kernel exiting and a deadline; on failure the
         // child is dropped, which kills it (kill_on_drop).
         let (shell, control, iopub) = tokio::select! {
-            sockets = connect_sockets(&conn) => sockets?,
+            sockets = connect_sockets(&conn) => {
+                sockets.map_err(|e| anyhow!("{e:#}{}", format_tail(&stderr_tail)))?
+            }
             status = child.wait() => {
                 if let Some(drained) = stderr_drained {
                     // The pipe closes with the process; wait for its last lines.
@@ -527,16 +549,15 @@ async fn drain_output(
     tail: Option<OutputTail>,
 ) {
     let emit = |line: &[u8]| {
-        let text = String::from_utf8_lossy(line)
-            .trim_end_matches('\r')
-            .to_string();
+        let text = line_text(line);
         tracing::info!(kernel = %kernel, stream, "{text}");
         if let Some(tail) = &tail {
             let mut tail = tail.lock();
-            if tail.len() == STDERR_TAIL_LINES {
-                tail.pop_front();
+            if tail.lines.len() == STDERR_TAIL_LINES {
+                tail.lines.pop_front();
             }
-            tail.push_back(text);
+            tail.lines.push_back(text);
+            tail.partial.clear();
         }
     };
 
@@ -555,6 +576,11 @@ async fn drain_output(
                 line.push(byte);
             }
         }
+        // Keep the line still being written, so an error reported before it
+        // ends (a start that times out) can show it.
+        if let Some(tail) = &tail {
+            tail.lock().partial = line_text(&line);
+        }
     }
     if !line.is_empty() {
         emit(&line);
@@ -562,11 +588,14 @@ async fn drain_output(
 }
 
 fn format_tail(tail: &OutputTail) -> String {
-    let lines = tail.lock();
+    let tail = tail.lock();
+    let mut lines: Vec<&str> = tail.lines.iter().map(String::as_str).collect();
+    if !tail.partial.is_empty() {
+        lines.push(&tail.partial);
+    }
     if lines.is_empty() {
         return String::new();
     }
-    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
     format!("; stderr:\n{}", lines.join("\n"))
 }
 
@@ -1195,6 +1224,60 @@ mod tests {
         connected
             .expect("connect must not hang")
             .expect("connect must succeed once the kernel holds its ports");
+    }
+
+    #[tokio::test]
+    async fn launch_shows_stderr_without_a_final_newline_on_timeout() {
+        let _serial = serial();
+        let message = launch_error(
+            spec(&[
+                "sh",
+                "-c",
+                "printf 'startup failure without newline' >&2; exec sleep 30",
+            ]),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert!(message.contains("did not open its ports"), "{message}");
+        assert!(
+            message.contains("startup failure without newline"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn launch_drains_a_kernel_that_floods_stdout() {
+        let _serial = serial();
+        // 2 MB on stdout would fill the pipe and block the kernel if nobody
+        // read it; then the start would only fail at the deadline.
+        let started = std::time::Instant::now();
+        let message = launch_error(
+            spec(&[
+                "sh",
+                "-c",
+                "head -c 2000000 /dev/zero | tr '\\0' 'x'; exit 4",
+            ]),
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(message.contains("exit status: 4"), "{message}");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "reported after {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn drained_lines_are_cut_at_a_character_boundary() {
+        let mut data = vec![b'a'; MAX_LINE_BYTES - 1];
+        data.extend_from_slice("€€\n".as_bytes());
+        let tail = OutputTail::default();
+        drain_output(&data[..], "test".to_string(), "stderr", Some(tail.clone())).await;
+        let tail = tail.lock();
+        let line = tail.lines.back().expect("one line");
+        assert!(line.len() <= MAX_LINE_BYTES, "{} bytes", line.len());
+        assert!(line.starts_with("aaa"));
     }
 
     #[tokio::test]
