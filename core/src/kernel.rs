@@ -27,6 +27,10 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const STDERR_TAIL_LINES: usize = 20;
 /// Longer kernel output lines are truncated when logged.
 const MAX_LINE_BYTES: usize = 4096;
+/// How often to check whether a starting kernel has opened its ports.
+const PORT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+/// Connection attempts after the kernel's ports looked open.
+const CONNECT_ATTEMPTS: usize = 5;
 
 type OutputTail = Arc<parking_lot::Mutex<VecDeque<String>>>;
 
@@ -523,7 +527,41 @@ fn write_connection_file(conn: &ConnectionInfo) -> Result<PathBuf> {
 }
 
 async fn connect_sockets(conn: &ConnectionInfo) -> Result<(DealerSocket, DealerSocket, SubSocket)> {
-    // Kernel needs a moment to bind its sockets; retry briefly
+    let mut attempt = 1;
+    loop {
+        wait_for_ports(conn).await;
+        match connect_once(conn).await {
+            Ok(sockets) => return Ok(sockets),
+            // The ports were open when probed, yet connecting failed: the
+            // ports are picked by binding to port 0 and released before the
+            // kernel binds them, so something else can briefly hold one.
+            Err(e) if attempt < CONNECT_ATTEMPTS => {
+                tracing::info!("connecting to the kernel failed, trying again: {e:#}");
+                attempt += 1;
+                tokio::time::sleep(PORT_POLL_INTERVAL).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Wait until the kernel's shell, control and iopub ports accept TCP
+/// connections. zeromq's connect() retries a refused connection only after a
+/// back-off (the first retry comes ~1.4 s later), while a kernel typically
+/// opens its ports within a few hundred milliseconds; polling lets the
+/// connect that follows succeed at once. Kernel::launch bounds this wait.
+async fn wait_for_ports(conn: &ConnectionInfo) {
+    for port in [conn.shell_port, conn.control_port, conn.iopub_port] {
+        while tokio::net::TcpStream::connect((conn.ip.as_str(), port))
+            .await
+            .is_err()
+        {
+            tokio::time::sleep(PORT_POLL_INTERVAL).await;
+        }
+    }
+}
+
+async fn connect_once(conn: &ConnectionInfo) -> Result<(DealerSocket, DealerSocket, SubSocket)> {
     let mut shell = DealerSocket::new();
     let mut control = DealerSocket::new();
     let mut iopub = SubSocket::new();
@@ -531,27 +569,19 @@ async fn connect_sockets(conn: &ConnectionInfo) -> Result<(DealerSocket, DealerS
         .subscribe("")
         .await
         .map_err(|e| anyhow!("iopub subscribe: {e}"))?;
-
-    let attempts = 50;
-    let delay = Duration::from_millis(100);
-    for i in 0..attempts {
-        let r1 = shell.connect(&conn.endpoint(conn.shell_port)).await;
-        let r2 = control.connect(&conn.endpoint(conn.control_port)).await;
-        let r3 = iopub.connect(&conn.endpoint(conn.iopub_port)).await;
-        if r1.is_ok() && r2.is_ok() && r3.is_ok() {
-            return Ok((shell, control, iopub));
-        }
-        if i + 1 == attempts {
-            return Err(anyhow!(
-                "could not connect kernel sockets: shell={:?} control={:?} iopub={:?}",
-                r1.err(),
-                r2.err(),
-                r3.err()
-            ));
-        }
-        tokio::time::sleep(delay).await;
-    }
-    unreachable!()
+    shell
+        .connect(&conn.endpoint(conn.shell_port))
+        .await
+        .map_err(|e| anyhow!("shell connect: {e}"))?;
+    control
+        .connect(&conn.endpoint(conn.control_port))
+        .await
+        .map_err(|e| anyhow!("control connect: {e}"))?;
+    iopub
+        .connect(&conn.endpoint(conn.iopub_port))
+        .await
+        .map_err(|e| anyhow!("iopub connect: {e}"))?;
+    Ok((shell, control, iopub))
 }
 
 /// Owns a DEALER socket. Drains an outgoing channel and recv()s replies.
@@ -791,6 +821,15 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    /// Tests that pick ports or start processes run one at a time. Ports are
+    /// picked by binding to port 0 and releasing them, so tests running in
+    /// parallel can be handed ports another test is about to use; the
+    /// latency test also needs a quiet machine.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn spec(argv: &[&str]) -> KernelSpec {
         KernelSpec {
             name: "test-kernel".to_string(),
@@ -820,6 +859,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_reports_a_kernel_that_exits_during_startup() {
+        let _serial = serial();
         let message = launch_error(
             spec(&[
                 "sh",
@@ -840,6 +880,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn launch_tells_the_kernel_its_parent_pid() {
+        let _serial = serial();
         let expected = format!("parent={}", std::process::id());
         // Also when the kernelspec's env sets the variable: ours wins.
         for preset in [None, Some("preset-by-the-kernelspec")] {
@@ -855,7 +896,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_sockets_follows_a_late_kernel_promptly() {
+        let _serial = serial();
+        let conn = ConnectionInfo::new_localhost("late-kernel").unwrap();
+        let ports = conn.clone();
+        // Stands in for a kernel that opens its ports shortly after launch.
+        let kernel = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let mut shell = zeromq::RouterSocket::new();
+            shell.bind(&ports.endpoint(ports.shell_port)).await.unwrap();
+            let mut control = zeromq::RouterSocket::new();
+            control
+                .bind(&ports.endpoint(ports.control_port))
+                .await
+                .unwrap();
+            let mut iopub = zeromq::PubSocket::new();
+            iopub.bind(&ports.endpoint(ports.iopub_port)).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            drop((shell, control, iopub));
+        });
+
+        let started = std::time::Instant::now();
+        let connected = tokio::time::timeout(Duration::from_secs(10), connect_sockets(&conn)).await;
+        let elapsed = started.elapsed();
+        kernel.abort();
+        connected
+            .expect("connect must not hang")
+            .expect("connect must succeed");
+        // zeromq's own retry would only connect after ~1.4 s.
+        assert!(
+            elapsed < Duration::from_millis(800),
+            "connected after {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_sockets_retries_when_something_else_held_a_port() {
+        let _serial = serial();
+        let conn = ConnectionInfo::new_localhost("squatted-kernel").unwrap();
+        let ports = conn.clone();
+        let kernel = tokio::spawn(async move {
+            let mut control = zeromq::RouterSocket::new();
+            control
+                .bind(&ports.endpoint(ports.control_port))
+                .await
+                .unwrap();
+            let mut iopub = zeromq::PubSocket::new();
+            iopub.bind(&ports.endpoint(ports.iopub_port)).await.unwrap();
+            // Another process briefly holds the shell port: it accepts the
+            // port probe and the first connection, closes them and goes away.
+            let squatter = tokio::net::TcpListener::bind((ports.ip.as_str(), ports.shell_port))
+                .await
+                .unwrap();
+            for _ in 0..2 {
+                let (stream, _) = squatter.accept().await.unwrap();
+                drop(stream);
+            }
+            drop(squatter);
+            let mut shell = zeromq::RouterSocket::new();
+            shell.bind(&ports.endpoint(ports.shell_port)).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            drop((shell, control, iopub));
+        });
+
+        let connected = tokio::time::timeout(Duration::from_secs(10), connect_sockets(&conn)).await;
+        kernel.abort();
+        connected
+            .expect("connect must not hang")
+            .expect("connect must succeed once the kernel holds its ports");
+    }
+
+    #[tokio::test]
     async fn launch_gives_up_on_a_kernel_that_never_opens_its_ports() {
+        let _serial = serial();
         let message = launch_error(spec(&["sleep", "30"]), Duration::from_millis(500)).await;
         assert!(
             message.contains("did not open its ports within 500ms"),
