@@ -315,6 +315,9 @@ local function kernel_label(spec)
 end
 
 function M.list_kernels(callback)
+  -- No check for a backend that exited meanwhile: the list comes from the
+  -- kernelspecs on disk and does not involve any session, so a late reply is
+  -- still a correct answer to the user's request.
   ensure_client():call('list_kernels', {}, function(err, result)
     if err then
       notify_failure('NotebookStyle list_kernels failed: ', err)

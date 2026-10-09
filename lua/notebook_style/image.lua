@@ -347,6 +347,8 @@ function M.ensure_transmitted(output, client, inner_width, callback)
       return
     end
 
+    -- A success reply means the image has already been written to the
+    -- terminal, so it holds even if the backend exited before it was read.
     client:call('kitty_transmit', { png_b64 = b64, cols = cols, rows = rows }, function(tx_err, result)
       if tx_err then
         fallback(tx_err)

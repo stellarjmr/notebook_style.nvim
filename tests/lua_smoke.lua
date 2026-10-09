@@ -137,13 +137,14 @@ end)
 local function fake_backend()
   local rpc = require('notebook_style.rpc')
   local original_spawn = rpc.spawn
-  local fake = { calls = {}, clients = {} }
+  local fake = { calls = {}, clients = {}, calls_after_exit = {} }
 
   rpc.spawn = function(opts)
     local client = { job = 1000 + #fake.clients, handlers = {}, opts = opts }
     function client:call(method, params, cb)
       cb = cb or function() end
       if self.exited then
+        table.insert(fake.calls_after_exit, method)
         cb('notebook-style-core is not running', nil)
         return
       end
@@ -1314,6 +1315,72 @@ test('a backend exit with requests in flight notifies once and ignores late repl
     assert_eq(state.get(buf).kernel_started, false, 'a late start_kernel reply must be ignored')
     assert_eq(#messages, 0, 'a late reply must not announce a started kernel: ' .. vim.inspect(messages))
     assert_eq(fake.count('execute_silent'), 1, 'no setup request for the dead backend')
+  end)
+
+  fake.restore()
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  if not ok then error(err, 0) end
+end)
+
+test('replies read after a backend exit do not trigger follow-up requests or messages', function()
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local old_notify = vim.notify
+  local messages = {}
+  local fake = fake_backend()
+  local buf
+
+  local ok, err = pcall(function()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, auto_venv = false, backend_cmd = { 'fake-backend' } })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'a = 1', '# %%', 'b = 2' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    local function start_kernel(session_id)
+      exec.start_kernel(buf)
+      fake.reply('open_py', nil, { session_id = session_id })
+      fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+      fake.reply('execute_silent', nil, {})
+    end
+    -- The backend exits and the exit is handled before `method`'s reply is read.
+    local function late_reply(method, result)
+      local clients, calls, dead_calls = #fake.clients, #fake.calls, #fake.calls_after_exit
+      fake.exit(nil, 9, { replies_after_exit = true })
+      messages = {}
+      fake.reply(method, nil, result)
+      assert_eq(#fake.clients, clients, method .. ': a late reply must not spawn a backend')
+      assert_eq(#fake.calls, calls, method .. ': a late reply must not send requests: ' .. vim.inspect(fake.methods()))
+      assert_eq(#fake.calls_after_exit, dead_calls,
+        method .. ': a late reply must not send requests to the dead backend: ' .. vim.inspect(fake.calls_after_exit))
+      assert_eq(#messages, 0, method .. ': a late reply must not notify: ' .. vim.inspect(messages))
+    end
+
+    start_kernel('s0')
+    exec.run_file(buf)
+    late_reply('update_cell_source', { ok = true }) -- must not send execute
+
+    start_kernel('s1')
+    exec.run_file(buf)
+    fake.reply('update_cell_source', nil, { ok = true })
+    late_reply('execute', { msg_id = 'm1' }) -- must not send the next cell
+
+    start_kernel('s2')
+    exec.stop_kernel(buf)
+    late_reply('stop_kernel', { ok = true }) -- must not say "kernel stopped"
+
+    start_kernel('s3')
+    exec.interrupt_kernel(buf)
+    late_reply('interrupt_kernel', { ok = true }) -- must not say "kernel interrupted"
+
+    start_kernel('s4')
+    exec.restart_kernel(buf)
+    late_reply('stop_kernel', { ok = true }) -- must not start a kernel on a new backend
   end)
 
   fake.restore()
