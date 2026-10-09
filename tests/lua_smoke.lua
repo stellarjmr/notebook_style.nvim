@@ -1087,6 +1087,59 @@ test('checkhealth reports Neovim older than 0.10 as unsupported', function()
   if not ok then error(err, 0) end
 end)
 
+test('checkhealth looks for kernelspecs where the backend does', function()
+  local backend = backend_path()
+  if vim.fn.executable(backend) ~= 1 then
+    skip_now('backend binary not executable: ' .. backend)
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local home = vim.fn.tempname()
+  local old_home, old_xdg = vim.env.HOME, vim.env.XDG_DATA_HOME
+  -- One kernelspec in each per-user directory that either side might search.
+  local specs = {
+    ['nbs-probe-library-jupyter'] = home .. '/Library/Jupyter/kernels',
+    ['nbs-probe-application-support'] = home .. '/Library/Application Support/jupyter/kernels',
+    ['nbs-probe-local-share'] = home .. '/.local/share/jupyter/kernels',
+  }
+
+  local ok, err = pcall(function()
+    for name, dir in pairs(specs) do
+      assert_eq(vim.fn.mkdir(dir .. '/' .. name, 'p'), 1)
+      vim.fn.writefile({ vim.fn.json_encode({ argv = { 'true' }, display_name = name, language = 'python' }) }, dir .. '/' .. name .. '/kernel.json')
+    end
+    vim.env.HOME = home
+    vim.env.XDG_DATA_HOME = nil
+    close_backends()
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false })
+    local listed
+    exec.list_kernels(function(_, kernels)
+      listed = {}
+      for _, spec in ipairs(kernels or {}) do
+        listed[spec.name] = true
+      end
+    end)
+    assert_true(vim.wait(10000, function() return listed ~= nil end, 10), 'list_kernels did not answer')
+    assert_true(listed['nbs-probe-library-jupyter'], 'the backend should list ~/Library/Jupyter kernels')
+
+    for name in pairs(specs) do
+      notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = name })
+      vim.cmd('checkhealth notebook_style')
+      local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+      vim.cmd('bwipeout!')
+      local found = text:find(("kernelspec '%s' found"):format(name), 1, true) ~= nil
+      assert_eq(found, listed[name] == true, ('checkhealth and the backend must agree whether %s exists'):format(name))
+    end
+  end)
+
+  close_backends()
+  vim.env.HOME = old_home
+  vim.env.XDG_DATA_HOME = old_xdg
+  vim.fn.delete(home, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('a failed backend download keeps the installed backend', function()
   local install = require('notebook_style.install')
   if not install._detect_target() then

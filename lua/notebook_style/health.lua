@@ -64,6 +64,20 @@ local function check_backend(opts)
   end
 end
 
+--- The user data directory as the backend sees it (`dirs::data_dir()` in
+--- core/src/kernelspec.rs): ~/Library/Application Support on macOS, else
+--- $XDG_DATA_HOME if it is an absolute path, else ~/.local/share.
+local function user_data_dir(home)
+  if vim.fn.has('mac') == 1 then
+    return home .. '/Library/Application Support'
+  end
+  local xdg = vim.env.XDG_DATA_HOME
+  if xdg and xdg:sub(1, 1) == '/' then
+    return xdg
+  end
+  return home .. '/.local/share'
+end
+
 --- Standard Jupyter kernelspec directories (mirrors core/src/kernelspec.rs).
 local function kernelspec_dirs()
   local dirs = {}
@@ -76,7 +90,7 @@ local function kernelspec_dirs()
 
   local home = vim.fn.expand('~')
   table.insert(dirs, home .. '/Library/Jupyter/kernels')
-  table.insert(dirs, (vim.env.XDG_DATA_HOME or (home .. '/.local/share')) .. '/jupyter/kernels')
+  table.insert(dirs, user_data_dir(home) .. '/jupyter/kernels')
   if vim.env.CONDA_PREFIX and vim.env.CONDA_PREFIX ~= '' then
     table.insert(dirs, vim.env.CONDA_PREFIX .. '/share/jupyter/kernels')
   end
