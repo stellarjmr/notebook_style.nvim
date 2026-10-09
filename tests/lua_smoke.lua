@@ -244,6 +244,14 @@ local function process_alive(pid)
   return vim.v.shell_error == 0
 end
 
+-- Whether a process has exited, counting a zombie (state Z) as exited: an
+-- orphan is reaped by init or a subreaper, which may happen late (for
+-- example in a container), so only its state shows that it has exited.
+local function process_exited(pid)
+  local stat = vim.trim(vim.fn.system({ 'ps', '-o', 'stat=', '-p', tostring(pid) }))
+  return stat == '' or stat:sub(1, 1) == 'Z'
+end
+
 -- Shut down every live backend the way Neovim does on exit (stdin EOF, so it
 -- kills its kernels) and wait until exec.lua has handled the exit.
 local function close_backends()
@@ -2594,10 +2602,8 @@ test('a killed backend is replaced and the buffer keeps executing', function()
     assert_true(vim.wait(5000, function() return state.get(buf).session_id == nil end, 10), 'backend exit was not handled')
     -- SIGKILL skips the backend's own cleanup; the kernel must notice that its
     -- parent is gone (JPY_PARENT_PID, polled every second) and exit.
-    assert_true(vim.wait(5000, function()
-      vim.fn.system({ 'kill', '-0', orphans[1] })
-      return vim.v.shell_error ~= 0
-    end, 100), 'the kernel of the killed backend kept running')
+    assert_true(vim.wait(5000, function() return process_exited(orphans[1]) end, 100),
+      'the kernel of the killed backend kept running')
 
     vim.api.nvim_win_set_cursor(0, { 4, 0 })
     exec.run_cell(buf)

@@ -194,10 +194,15 @@ impl Kernel {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
-        // Like jupyter_client: ipykernel polls this pid and exits once its
-        // parent is gone, so a backend killed by a signal (which skips
-        // kill_on_drop) does not leave the kernel running forever.
-        cmd.env("JPY_PARENT_PID", std::process::id().to_string());
+        // Like jupyter_client on Unix: ipykernel polls this pid and exits once
+        // its parent is gone, so a backend killed by a signal (which skips
+        // kill_on_drop) does not leave the kernel running forever. Set after
+        // the kernelspec's env, which cannot override it. Not on Windows:
+        // there ipykernel waits on the value as an inheritable process
+        // handle, which jupyter_client creates for it; a pid is not one.
+        if cfg!(unix) {
+            cmd.env("JPY_PARENT_PID", std::process::id().to_string());
+        }
         if let Some(d) = cwd {
             cmd.current_dir(d);
         }
@@ -832,15 +837,21 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn launch_tells_the_kernel_its_parent_pid() {
-        let message = launch_error(
-            spec(&["sh", "-c", "echo \"parent=$JPY_PARENT_PID\" >&2; exit 3"]),
-            STARTUP_TIMEOUT,
-        )
-        .await;
         let expected = format!("parent={}", std::process::id());
-        assert!(message.contains(&expected), "{message}");
+        // Also when the kernelspec's env sets the variable: ours wins.
+        for preset in [None, Some("preset-by-the-kernelspec")] {
+            let mut kernel = spec(&["sh", "-c", "echo \"parent=$JPY_PARENT_PID\" >&2; exit 3"]);
+            if let Some(value) = preset {
+                kernel
+                    .env
+                    .insert("JPY_PARENT_PID".to_string(), value.to_string());
+            }
+            let message = launch_error(kernel, STARTUP_TIMEOUT).await;
+            assert!(message.contains(&expected), "{preset:?}: {message}");
+        }
     }
 
     #[tokio::test]
