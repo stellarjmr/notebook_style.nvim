@@ -251,12 +251,30 @@ local function process_alive(pid)
   return vim.v.shell_error == 0
 end
 
+local function ps_state(pid)
+  local stat = vim.trim(vim.fn.system({ 'ps', '-o', 'stat=', '-p', tostring(pid) }))
+  return vim.v.shell_error, stat
+end
+
 -- Whether a process has exited, counting a zombie (state Z) as exited: an
 -- orphan is reaped by init or a subreaper, which may happen late (for
 -- example in a container), so only its state shows that it has exited.
+-- `ps -p` prints nothing and exits 1 for a pid that does not exist. That
+-- only counts once `ps` has shown this Neovim's own state, so a `ps` that
+-- fails silently or has no -p (busybox) raises an error instead.
 local function process_exited(pid)
-  local stat = vim.trim(vim.fn.system({ 'ps', '-o', 'stat=', '-p', tostring(pid) }))
-  return stat == '' or stat:sub(1, 1) == 'Z'
+  local self_status, self_stat = ps_state(vim.fn.getpid())
+  if self_status ~= 0 or self_stat == '' then
+    error(('ps -o stat= -p does not work here (exit %d): %s'):format(self_status, self_stat), 0)
+  end
+  local status, stat = ps_state(pid)
+  if status == 1 and stat == '' then
+    return true
+  end
+  if status ~= 0 then
+    error(('ps failed for process %s (exit %d): %s'):format(pid, status, stat), 0)
+  end
+  return stat:sub(1, 1) == 'Z'
 end
 
 -- Shut down every live backend the way Neovim does on exit (stdin EOF, so it
@@ -300,6 +318,40 @@ test('sh_quote round-trips awkward paths through /bin/sh', function()
     local out = vim.fn.system({ '/bin/sh', '-c', 'printf %s ' .. sh_quote(text) })
     assert_eq(out, text, 'quoting must survive /bin/sh unchanged')
   end
+end)
+
+test('process_exited counts a zombie as exited and rejects a ps that does not work', function()
+  -- A zombie: sh starts a short sleep in the background and execs a long one,
+  -- which never reaps it. The short one must outlive the exec: a child that
+  -- exits before it may be reaped by the shell itself.
+  local zombie
+  local job = vim.fn.jobstart({ 'sh', '-c', 'sleep 0.5 & echo $!; exec sleep 10' }, {
+    on_stdout = function(_, data)
+      if not zombie and data[1] and data[1] ~= '' then
+        zombie = data[1]
+      end
+    end,
+  })
+  local fake_bin = vim.fn.tempname()
+  local old_path = vim.env.PATH
+  local ok, err = pcall(function()
+    assert_true(vim.wait(3000, function() return zombie ~= nil and process_exited(zombie) end, 20), 'a zombie counts as exited')
+    assert_true(process_alive(zombie), 'while kill -0 still finds it')
+    assert_true(not process_exited(vim.fn.jobpid(job)), 'a running process has not exited')
+
+    -- A ps that fails without output must not make every process look exited.
+    vim.fn.mkdir(fake_bin, 'p')
+    vim.fn.writefile({ '#!/bin/sh', 'exit 2' }, fake_bin .. '/ps')
+    vim.fn.setfperm(fake_bin .. '/ps', 'rwx------')
+    vim.env.PATH = fake_bin .. ':' .. old_path
+    local checked, message = pcall(process_exited, vim.fn.jobpid(job))
+    assert_true(not checked and tostring(message):find('does not work here', 1, true) ~= nil,
+      'a ps that fails must be an error: ' .. tostring(message))
+  end)
+  vim.env.PATH = old_path
+  vim.fn.jobstop(job)
+  vim.fn.delete(fake_bin, 'rf')
+  if not ok then error(err, 0) end
 end)
 
 test('setup registers commands and defaults', function()
@@ -1127,14 +1179,13 @@ test('checkhealth reports Neovim older than 0.10 as unsupported', function()
     end
     local text = health_text()
     -- Other sections can report errors too (e.g. no backend installed), so
-    -- the ERROR must be on the version line itself.
-    local version_line
-    for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
-      if line:find('requires Neovim >= 0.10', 1, true) then
-        version_line = line
-      end
-    end
-    assert_true(version_line ~= nil, 'an older Neovim must be reported as unsupported: ' .. text)
+    -- the ERROR must be on the version line itself, and that line must be
+    -- the only one naming the requirement.
+    local version_lines = vim.tbl_filter(function(line)
+      return line:find('requires Neovim >= 0.10', 1, true) ~= nil
+    end, vim.split(text, '\n', { plain = true }))
+    assert_eq(#version_lines, 1, 'one line must report the older Neovim as unsupported: ' .. text)
+    local version_line = version_lines[1]
     assert_true(version_line:find('ERROR', 1, true) ~= nil, 'as an error: ' .. version_line)
     assert_true(text:find('still works', 1, true) == nil, 'and without claiming that rendering still works')
   end)

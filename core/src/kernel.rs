@@ -234,12 +234,16 @@ impl Kernel {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
-        // Like jupyter_client on Unix: ipykernel polls this pid and exits once
-        // its parent is gone, so a backend killed by a signal (which skips
-        // kill_on_drop) does not leave the kernel running forever. Set after
-        // the kernelspec's env, which cannot override it. Not on Windows:
-        // there ipykernel waits on the value as an inheritable process
-        // handle, which jupyter_client creates for it; a pid is not one.
+        // Like jupyter_client on Unix: with this pid ipykernel polls its
+        // parent and exits once it is gone, so a backend killed by a signal
+        // (which skips kill_on_drop) need not leave the kernel running. Only
+        // if the poller saw the backend as the parent: older ipykernel, or a
+        // backend that died before the poller started, only exit when the
+        // kernel is re-parented to PID 1, and a forwarding wrapper keeps it.
+        // Set after the kernelspec's env, which cannot override it. Not on
+        // Windows: there ipykernel waits on the value as an inheritable
+        // process handle, which jupyter_client creates for it; a pid is not
+        // one.
         if cfg!(unix) {
             cmd.env("JPY_PARENT_PID", std::process::id().to_string());
         }
