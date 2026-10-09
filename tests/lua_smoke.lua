@@ -1754,7 +1754,7 @@ test('stopping a kernel that is still starting drops the queued runs', function(
     assert_eq(t.fake.count('update_cell_source'), 0, 'a run issued before the stop must not be sent')
     assert_eq(t.fake.count('stop_kernel'), 1)
     local notices = vim.tbl_filter(function(message)
-      return message:find('still starting, so it was not stopped', 1, true) ~= nil
+      return message:find('so it was not stopped', 1, true) ~= nil
     end, t.messages)
     assert_eq(#notices, 2, 'each stop during a start says what it did: ' .. vim.inspect(t.messages))
   end)
@@ -1963,6 +1963,46 @@ test('a kernel that exits by itself is reported and the next run starts a new on
     t.fake.reply('execute_silent', nil, {})
     assert_eq(t.fake.reply('update_cell_source', nil, { ok = true }).params.source, 'a = 1')
     assert_no_failures(t.messages)
+  end)
+end)
+
+test('a stop during a restart lets the restart finish and keeps its callers', function()
+  queue_fixture(function(t)
+    t.start('s1')
+    local calls = 0
+    t.exec.restart_kernel(t.buf)
+    t.exec.start_kernel(t.buf, function()
+      calls = calls + 1
+    end)
+    -- Unlike a second stop during a stop, this stop does not cancel anything
+    -- the restart was asked for.
+    t.exec.stop_kernel(t.buf)
+    t.fake.reply('stop_kernel', nil, { ok = true })
+    assert_eq(t.fake.reply('start_kernel', nil, { kernel_name = 'python3' }).params.session_id, 's1', 'the restart starts its new kernel')
+    t.fake.reply('execute_silent', nil, {})
+    assert_eq(calls, 1, 'the caller waiting for the restart is served by the new kernel')
+    assert_eq(require('notebook_style.state').get(t.buf).kernel_started, true)
+    local notices = vim.tbl_filter(function(message)
+      return message:find('so it was not stopped', 1, true) ~= nil
+    end, t.messages)
+    assert_eq(#notices, 1, vim.inspect(t.messages))
+  end)
+end)
+
+test('a setup reply from a dead backend ends the start without serving its callers', function()
+  queue_fixture(function(t)
+    local calls = 0
+    t.exec.start_kernel(t.buf, function()
+      calls = calls + 1
+    end)
+    t.run(1)
+    t.fake.reply('open_py', nil, { session_id = 's1' })
+    t.fake.reply('start_kernel', nil, { kernel_name = 'python3' })
+    -- The setup request fails because the backend died, and the failure is
+    -- read before the exit itself is handled.
+    t.fake.reply('execute_silent', 'notebook-style-core exited', nil)
+    assert_eq(calls, 0, 'no kernel serves the waiting caller')
+    assert_eq(t.fake.count('update_cell_source'), 0, 'the queued run must not be sent')
   end)
 end)
 

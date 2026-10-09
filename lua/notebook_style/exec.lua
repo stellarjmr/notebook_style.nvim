@@ -572,12 +572,14 @@ function M.start_kernel(bufnr, callback, quiet)
         vim.notify("NotebookStyle kernel '" .. tostring(started_kernel_name) .. "' started", vim.log.levels.INFO)
       end
 
-      -- Hold queued runs until this setup code has reached the kernel.
+      -- Hold queued runs until this setup code has reached the kernel. A
+      -- failure of the setup itself is ignored, but not a backend that is
+      -- gone: then no kernel serves the waiting callers and runs.
       cl:call('execute_silent', {
         session_id = session_id,
         code = "try:\n    get_ipython().run_line_magic('matplotlib', 'inline')\nexcept Exception:\n    pass\n",
-      }, function()
-        finish_start(bufnr, buffer_state, start, cl == client)
+      }, function(err)
+        finish_start(bufnr, buffer_state, start, cl == client and not rpc.is_backend_gone(err))
       end)
     end)
   end
@@ -734,7 +736,7 @@ function M.stop_kernel(bufnr)
   end
   if starting then
     -- A start or restart in flight is not cancelled.
-    vim.notify('NotebookStyle: the kernel is still starting, so it was not stopped; queued runs were discarded', vim.log.levels.INFO)
+    vim.notify('NotebookStyle: the kernel is still starting or restarting, so it was not stopped; queued runs were discarded', vim.log.levels.INFO)
     return
   end
   if not buffer_state.session_id then
