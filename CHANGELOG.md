@@ -5,8 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
-- `tests/run_all.sh` now fails when a Lua smoke test fails, the Lua suite raises an error (including in asynchronous callbacks), or the suite exits before reporting its results. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner now needs Neovim 0.9 or newer (`nvim -l`).
+- `tests/run_all.sh` now fails when a Lua smoke test fails, the Lua suite raises an error (including in asynchronous callbacks), or the suite exits before reporting its results. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner uses `nvim -l`.
 - If the execution backend exits unexpectedly (crash or kill), buffers no longer stay stuck with `no session` errors: requests in flight fail instead of waiting forever, without an error message per request; the kernel state is reset and the exit is reported once (lines the backend wrote to stderr are still shown, as before); replies that arrive from the exited backend no longer change a buffer's session; and the next run starts a new backend and kernel. Existing outputs stay visible.
+
+### Changed
+- The documented minimum Neovim version is now 0.10 (it was 0.8). Rendering has needed 0.10 for some time: it uses the `virt_text_repeat_linebreak` extmark option, which older versions reject. `:checkhealth notebook_style` now reports an older Neovim as an error instead of saying core rendering still works.
 
 ## [0.11.0] - 2026-09-22
 

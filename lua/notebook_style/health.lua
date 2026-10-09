@@ -21,13 +21,10 @@ local function check_neovim()
 
   if vim.fn.has('nvim-0.10') == 1 then
     health.ok('Neovim ' .. tostring(vim.version()) .. ' (>= 0.10)')
-  elseif vim.fn.has('nvim-0.8') == 1 then
-    health.warn('Neovim ' .. tostring(vim.version()) .. ' is older than 0.10', {
-      'Borders on wrapped lines use virt_text_repeat_linebreak (Neovim 0.10+).',
-      'Core rendering still works, but upgrading is recommended.',
-    })
   else
-    health.error('Neovim is older than 0.8; the plugin requires Neovim >= 0.8')
+    health.error('Neovim ' .. tostring(vim.version()) .. ' is not supported; notebook_style.nvim requires Neovim >= 0.10', {
+      'Cell borders use the virt_text_repeat_linebreak extmark option, added in Neovim 0.10.',
+    })
   end
 end
 

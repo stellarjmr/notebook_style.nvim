@@ -524,7 +524,7 @@ vim.keymap.set('n', '<leader>ns', '<cmd>NotebookStyleToggle<cr>', { desc = 'Togg
 
 ## Requirements
 
-- Neovim >= 0.8.0
+- Neovim >= 0.10
 - A font that supports Unicode box-drawing characters (most modern terminal fonts)
 - Jupytext if you want to edit `.ipynb` notebooks as `# %%` Python buffers
 
@@ -536,7 +536,7 @@ Run the focused local test suite with:
 tests/run_all.sh
 ```
 
-This checks Rust formatting, runs `cargo test`, builds the release backend, and runs headless Neovim Lua smoke tests. The Lua suite also exercises `auto_venv` when `python3` can import `ipykernel`; otherwise that integration check is reported as skipped. The script exits non-zero if any check or Lua test fails; it needs Neovim 0.9 or newer for `nvim -l`.
+This checks Rust formatting, runs `cargo test`, builds the release backend, and runs headless Neovim Lua smoke tests. The Lua suite also exercises `auto_venv` when `python3` can import `ipykernel`; otherwise that integration check is reported as skipped. The script exits non-zero if any check or Lua test fails; like the plugin, it needs Neovim 0.10 or newer.
 
 With `ipykernel` and `matplotlib` available to `python3`, the suite also verifies
 plain-file execution with both `auto_venv` settings: unsaved source, silent

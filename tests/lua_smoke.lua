@@ -916,6 +916,34 @@ test('checkhealth notebook_style reports all sections', function()
   vim.cmd('bwipeout!')
 end)
 
+test('checkhealth reports Neovim older than 0.10 as unsupported', function()
+  local real_has = vim.fn.has
+  local function health_text()
+    vim.cmd('checkhealth notebook_style')
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+    vim.cmd('bwipeout!')
+    return text
+  end
+
+  local ok, err = pcall(function()
+    assert_true(health_text():find('(>= 0.10)', 1, true) ~= nil, 'the running Neovim should be reported as supported')
+    -- Pretend to be an older Neovim: only the 0.10 feature check answers no.
+    vim.fn.has = function(feature)
+      if feature == 'nvim-0.10' then
+        return 0
+      end
+      return real_has(feature)
+    end
+    local text = health_text()
+    assert_true(text:find('requires Neovim >= 0.10', 1, true) ~= nil, 'an older Neovim must be reported as unsupported: ' .. text)
+    assert_true(text:find('ERROR', 1, true) ~= nil, 'as an error: ' .. text)
+    assert_true(text:find('still works', 1, true) == nil, 'and without claiming that rendering still works')
+  end)
+
+  vim.fn.has = real_has
+  if not ok then error(err, 0) end
+end)
+
 test('open output creates readonly focusable floating buffer', function()
   local notebook = require('notebook_style')
   local cells_mod = require('notebook_style.cells')
