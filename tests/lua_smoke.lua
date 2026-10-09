@@ -729,7 +729,7 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
   local config = require('notebook_style.config')
   local buf = vim.api.nvim_create_buf(false, true)
   local first_win = vim.api.nvim_get_current_win()
-  local split_win
+  local windows_before = vim.api.nvim_list_wins()
 
   local ok, err = pcall(function()
     notebook.setup({ keymaps = false, output_max_lines = 6 })
@@ -797,10 +797,13 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
     end
 
     check(first_win)
+    -- Then a split whose text width has the other parity (in the headless
+    -- 80-column suite: 76, then 37).
+    local first_parity = (vim.api.nvim_win_get_width(first_win) - 4) % 2
     vim.cmd('vsplit')
-    split_win = vim.api.nvim_get_current_win()
-    local parity = (vim.api.nvim_win_get_width(first_win) - 4) % 2
-    vim.api.nvim_win_set_width(split_win, parity == 0 and 41 or 40)
+    local split_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(split_win, first_parity == 0 and 41 or 40)
+    assert_true((vim.api.nvim_win_get_width(split_win) - 4) % 2 ~= first_parity, 'the split must have a text width of the other parity')
     check(split_win)
 
     -- Wrapping must stop at the row budget: a 100K-character line used to take
@@ -813,8 +816,10 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
     assert_true(elapsed_ms < 1000, string.format('rendering a 100K-character line took %.0f ms', elapsed_ms))
   end)
 
-  if split_win and vim.api.nvim_win_is_valid(split_win) then
-    vim.api.nvim_win_close(split_win, true)
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if not vim.tbl_contains(windows_before, win) then
+      vim.api.nvim_win_close(win, true)
+    end
   end
   vim.api.nvim_set_current_win(first_win)
   state.clear(buf)
