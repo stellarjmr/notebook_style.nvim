@@ -1087,6 +1087,62 @@ test('checkhealth reports Neovim older than 0.10 as unsupported', function()
   if not ok then error(err, 0) end
 end)
 
+test('a failed backend download keeps the installed backend', function()
+  local install = require('notebook_style.install')
+  if not install._detect_target() then
+    skip_now('no prebuilt backend for this platform')
+  end
+
+  -- Stand-ins first on PATH: git reports a release tag; curl writes part of
+  -- the file to its -o path and fails like an interrupted transfer, or with
+  -- NBS_FAKE_CURL_OK writes the whole file; cargo fails.
+  local root = vim.fn.tempname()
+  local bin = root .. '/bin'
+  local release_dir = root .. '/plugin/core/target/release'
+  local dest = release_dir .. '/notebook-style-core'
+  vim.fn.mkdir(bin, 'p')
+  vim.fn.mkdir(release_dir, 'p')
+  local function script(name, lines)
+    table.insert(lines, 1, '#!/bin/sh')
+    vim.fn.writefile(lines, bin .. '/' .. name)
+    vim.fn.setfperm(bin .. '/' .. name, 'rwxr-xr-x')
+  end
+  script('git', { 'echo v0.0.0-test' })
+  script('curl', {
+    'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done',
+    'if [ -n "$NBS_FAKE_CURL_OK" ]; then echo "new backend" > "$out"; exit 0; fi',
+    'printf partial > "$out"',
+    'exit 18',
+  })
+  script('cargo', { 'echo "fake cargo: build failed" >&2', 'exit 101' })
+  vim.fn.writefile({ 'old backend' }, dest)
+  vim.fn.setfperm(dest, 'rwxr-xr-x')
+
+  local old_path, old_notify = vim.env.PATH, vim.notify
+  vim.env.PATH = bin .. ':' .. old_path
+  vim.notify = function() end
+  local ok, err = pcall(function()
+    local installed, install_err = pcall(install.run, { dir = root .. '/plugin' })
+    assert_eq(installed, false, 'the cargo fallback fails here')
+    assert_true(tostring(install_err):find('cargo build failed', 1, true) ~= nil, 'unexpected error: ' .. tostring(install_err))
+    assert_eq(table.concat(vim.fn.readfile(dest), '\n'), 'old backend', 'a failed download must keep the installed backend')
+    assert_eq(vim.fn.executable(dest), 1, 'the installed backend must stay executable')
+    assert_eq(table.concat(vim.fn.readdir(release_dir), ' '), 'notebook-style-core', 'no partial download may be left behind')
+
+    vim.env.NBS_FAKE_CURL_OK = '1'
+    assert_eq(install.run({ dir = root .. '/plugin' }), true, 'a complete download is installed')
+    assert_eq(table.concat(vim.fn.readfile(dest), '\n'), 'new backend', 'the complete download replaces the backend')
+    assert_eq(vim.fn.executable(dest), 1, 'the new backend must be executable')
+    assert_eq(table.concat(vim.fn.readdir(release_dir), ' '), 'notebook-style-core', 'the download file is moved into place')
+  end)
+
+  vim.env.PATH = old_path
+  vim.env.NBS_FAKE_CURL_OK = nil
+  vim.notify = old_notify
+  vim.fn.delete(root, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('open output creates readonly focusable floating buffer', function()
   local notebook = require('notebook_style')
   local cells_mod = require('notebook_style.cells')

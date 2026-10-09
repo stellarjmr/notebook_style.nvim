@@ -106,6 +106,10 @@ function M.run(plugin)
 
   local url = M._url_for(tag, target)
   local dest = binary_dest(plugin_dir)
+  -- Download next to the binary and move it into place only when complete,
+  -- so a failed or interrupted download never replaces a working backend
+  -- with a partial file.
+  local download = dest .. '.download'
   notify(('notebook_style: downloading prebuilt backend %s for %s'):format(tag, target))
   local out = vim.fn.system({
     'curl',
@@ -115,19 +119,25 @@ function M.run(plugin)
     '--retry-delay',
     '2',
     '-o',
-    dest,
+    download,
     url,
   })
   if vim.v.shell_error ~= 0 then
+    os.remove(download)
     notify(('notebook_style: download failed; falling back to cargo:\n%s'):format(out), vim.log.levels.WARN)
     build_from_source(plugin_dir)
     return false
   end
 
-  vim.fn.system({ 'chmod', '+x', dest })
+  vim.fn.system({ 'chmod', '+x', download })
   local uv = vim.uv or vim.loop
   if uv.os_uname().sysname == 'Darwin' then
-    vim.fn.system({ 'xattr', '-cr', dest })
+    vim.fn.system({ 'xattr', '-cr', download })
+  end
+  local renamed, rename_err = os.rename(download, dest)
+  if not renamed then
+    os.remove(download)
+    error(('notebook_style: could not install the downloaded backend: %s'):format(rename_err))
   end
 
   notify(('notebook_style: installed prebuilt backend for %s'):format(target))
