@@ -9,7 +9,8 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -150,6 +151,8 @@ pub enum KernelEvent {
 pub struct Kernel {
     spec: KernelSpec,
     conn: ConnectionInfo,
+    /// Kept for the kernel's lifetime; removed when the kernel is dropped.
+    _conn_file: ConnectionFile,
     session: String,
     child: Mutex<Child>,
     /// Outgoing-frame channel for shell socket (the socket-owning task drains this)
@@ -177,7 +180,9 @@ impl Kernel {
         startup_timeout: Duration,
     ) -> Result<Self> {
         let conn = ConnectionInfo::new_localhost(&spec.name)?;
-        let conn_path = write_connection_file(&conn)?;
+        // Removed again when this function fails, or with the kernel.
+        let conn_file = ConnectionFile::create(&std::env::temp_dir(), &conn)?;
+        let conn_path = conn_file.path.clone();
         tracing::info!(?conn_path, kernel = %spec.name, "launching kernel");
 
         let argv: Vec<String> = spec
@@ -289,6 +294,7 @@ impl Kernel {
         Ok(Self {
             spec,
             conn,
+            _conn_file: conn_file,
             session,
             child: Mutex::new(child),
             shell_tx,
@@ -506,24 +512,65 @@ fn format_tail(tail: &OutputTail) -> String {
     format!("; stderr:\n{}", lines.join("\n"))
 }
 
-fn write_connection_file(conn: &ConnectionInfo) -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join("notebook_style");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("kernel-{}.json", Uuid::new_v4()));
-    let val = json!({
-        "ip": conn.ip,
-        "transport": conn.transport,
-        "shell_port": conn.shell_port,
-        "iopub_port": conn.iopub_port,
-        "stdin_port": conn.stdin_port,
-        "control_port": conn.control_port,
-        "hb_port": conn.hb_port,
-        "key": conn.key,
-        "signature_scheme": conn.signature_scheme,
-        "kernel_name": conn.kernel_name,
-    });
-    std::fs::write(&path, serde_json::to_vec_pretty(&val)?)?;
-    Ok(path)
+/// A kernel's connection file. It holds the key that signs messages to the
+/// kernel, so whoever can read it can run code in that kernel. It is written
+/// into a new directory with an unpredictable name that only this user can
+/// enter (a shared /tmp on Linux), readable by the owner only, and both are
+/// removed when this value is dropped: with the kernel, or when it fails to
+/// start.
+struct ConnectionFile {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl ConnectionFile {
+    fn create(parent: &Path, conn: &ConnectionInfo) -> Result<Self> {
+        let dir = parent.join(format!("notebook_style-{}", Uuid::new_v4()));
+        create_private_dir(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        let file = Self {
+            path: dir.join("kernel.json"),
+            dir,
+        };
+        let contents = serde_json::to_vec_pretty(&json!({
+            "ip": conn.ip,
+            "transport": conn.transport,
+            "shell_port": conn.shell_port,
+            "iopub_port": conn.iopub_port,
+            "stdin_port": conn.stdin_port,
+            "control_port": conn.control_port,
+            "hb_port": conn.hb_port,
+            "key": conn.key,
+            "signature_scheme": conn.signature_scheme,
+            "kernel_name": conn.kernel_name,
+        }))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options
+            .open(&file.path)
+            .and_then(|mut f| f.write_all(&contents))
+            .with_context(|| format!("writing {}", file.path.display()))?;
+        Ok(file)
+    }
+}
+
+impl Drop for ConnectionFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_dir(&self.dir);
+    }
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(dir)
 }
 
 async fn connect_sockets(conn: &ConnectionInfo) -> Result<(DealerSocket, DealerSocket, SubSocket)> {
@@ -928,6 +975,49 @@ mod tests {
             elapsed < Duration::from_millis(800),
             "connected after {elapsed:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connection_files_are_private_and_removed_when_dropped() {
+        let _serial = serial();
+        use std::os::unix::fs::PermissionsExt;
+        let conn = ConnectionInfo::new_localhost("test-kernel").unwrap();
+        let file = ConnectionFile::create(&std::env::temp_dir(), &conn).unwrap();
+        let (dir, path) = (file.dir.clone(), file.path.clone());
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700, "{}", dir.display());
+        assert_eq!(mode(&path), 0o600, "{}", path.display());
+        let written: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["key"], conn.key.as_str());
+        assert_eq!(written["shell_port"], conn.shell_port);
+        drop(file);
+        assert!(!path.exists(), "{} must be removed", path.display());
+        assert!(!dir.exists(), "{} must be removed", dir.display());
+    }
+
+    #[tokio::test]
+    async fn a_kernel_that_fails_to_start_leaves_no_connection_file() {
+        let _serial = serial();
+        let message = launch_error(
+            spec(&[
+                "sh",
+                "-c",
+                "echo \"connection=$0\" >&2; exit 3",
+                "{connection_file}",
+            ]),
+            STARTUP_TIMEOUT,
+        )
+        .await;
+        let path = message
+            .split("connection=")
+            .nth(1)
+            .and_then(|rest| rest.lines().next())
+            .unwrap_or_else(|| panic!("no connection file path in: {message}"));
+        let path = Path::new(path.trim());
+        assert!(path.ends_with("kernel.json"), "{message}");
+        assert!(!path.exists(), "{} must be removed", path.display());
+        assert!(!path.parent().unwrap().exists(), "{message}");
     }
 
     #[tokio::test]

@@ -2477,6 +2477,71 @@ test('deleting a buffer while its real kernel launches stops that kernel', funct
   if not closed then error(close_err, 0) end
 end)
 
+test('kernel connection files are private and removed with the kernel', function()
+  local backend = backend_path()
+  local python = vim.fn.exepath('python3')
+  if vim.fn.executable(backend) ~= 1 or python == '' or not python_imports_ipykernel(python) then
+    skip_now('requires the backend and python3 with ipykernel')
+  end
+
+  local notebook = require('notebook_style')
+  local exec = require('notebook_style.exec')
+  local state = require('notebook_style.state')
+  local cells = require('notebook_style.cells')
+  local config = require('notebook_style.config')
+  local project = vim.fn.tempname()
+  local old_notify = vim.notify
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  local messages = {}
+  local buf
+
+  local ok, err = pcall(function()
+    assert_eq(vim.fn.mkdir(project .. '/kernels/notebook-style-smoke', 'p'), 1)
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = 'NotebookStyle smoke test', language = 'python',
+    }) }, project .. '/kernels/notebook-style-smoke/kernel.json')
+    vim.env.JUPYTER_PATH = project
+    close_backends()
+    vim.notify = function(message) table.insert(messages, tostring(message)) end
+    notebook.setup({ keymaps = false, backend_cmd = { backend }, auto_venv = false, kernel_name = 'notebook-style-smoke' })
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.bo[buf].filetype = 'python'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '# %%', 'print("alive")' })
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    exec.run_cell(buf)
+    assert_true(vim.wait(20000, function()
+      local cell = cells.get_cells(buf, cells.find_delimiters(buf, config.options.cell_delimiter), 2)[1]
+      local outputs = state.outputs(buf, cell)
+      return outputs[1] and outputs[1].text == 'alive\n'
+    end, 10), 'run failed: ' .. vim.inspect(messages))
+
+    -- The kernel was started with `-f <connection file>`.
+    local kernel_pid = vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(backends[#backends].pid) }))
+    local args = vim.fn.system({ 'ps', '-o', 'args=', '-p', kernel_pid })
+    local path = args:match('%-f%s+(%S+)')
+    assert_true(path ~= nil, 'no connection file in the kernel arguments: ' .. args)
+    local dir = vim.fn.fnamemodify(path, ':h')
+    assert_eq(vim.fn.getfperm(path), 'rw-------', 'only the user may read the connection file')
+    assert_eq(vim.fn.getfperm(dir), 'rwx------', 'only the user may enter its directory')
+
+    exec.stop_kernel(buf)
+    assert_true(vim.wait(5000, function() return vim.fn.isdirectory(dir) == 0 end, 20), 'the connection file must be removed with the kernel: ' .. path)
+    assert_eq(vim.fn.filereadable(path), 0)
+  end)
+
+  vim.notify = old_notify
+  if buf and vim.api.nvim_buf_is_valid(buf) then
+    notebook.disable(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+  close_backends()
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(project, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('rapid runs reach a real kernel once each and in order', function()
   local backend = backend_path()
   local python = vim.fn.exepath('python3')
