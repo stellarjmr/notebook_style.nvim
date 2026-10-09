@@ -581,6 +581,9 @@ test('markdown decorations render only outside insert mode', function()
   config.options.markdown = original_markdown_config
 
   notebook.disable(buf)
+  -- The plugin was never enabled for this buffer, so disable() leaves the
+  -- state that rendering created.
+  require('notebook_style.state').clear(buf)
   vim.api.nvim_buf_delete(buf, { force = true })
 end)
 
@@ -786,8 +789,10 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
 
     -- Expectations follow from the text width (frame width minus the side
     -- borders and padding); check an even and an odd one.
+    local checked_parities = {}
     local function check(win)
       local text_width = vim.api.nvim_win_get_width(win) - 4
+      checked_parities[text_width % 2] = true
       local half = math.floor(text_width / 2)
       local label = ' (text width ' .. text_width .. ')'
 
@@ -834,6 +839,7 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
     vim.api.nvim_win_set_width(split_win, first_parity == 0 and 41 or 40)
     assert_true((vim.api.nvim_win_get_width(split_win) - 4) % 2 ~= first_parity, 'the split must have a text width of the other parity')
     check(split_win)
+    assert_true(checked_parities[0] and checked_parities[1], 'one even and one odd text width must be checked')
 
     -- Wrapping must stop at the row budget: a 100K-character line used to take
     -- seconds per render because the whole line was wrapped every time.
@@ -846,13 +852,13 @@ test('long output lines wrap at the frame width and stop at output_max_lines', f
   end)
 
   for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if not vim.tbl_contains(windows_before, win) then
-      vim.api.nvim_win_close(win, true)
+    if not vim.tbl_contains(windows_before, win) and vim.api.nvim_win_is_valid(win) then
+      pcall(vim.api.nvim_win_close, win, true)
     end
   end
-  vim.api.nvim_set_current_win(first_win)
+  pcall(vim.api.nvim_set_current_win, first_win)
   state.clear(buf)
-  vim.api.nvim_buf_delete(buf, { force = true })
+  pcall(vim.api.nvim_buf_delete, buf, { force = true })
   if not ok then error(err, 0) end
 end)
 
@@ -1295,6 +1301,7 @@ test('open output creates readonly focusable floating buffer', function()
 
   pcall(vim.api.nvim_win_close, winid, true)
   notebook.disable(buf)
+  state.clear(buf) -- never enabled, so disable() keeps the state
   vim.api.nvim_buf_delete(buf, { force = true })
   vim.o.columns = old_columns
   vim.o.lines = old_lines
