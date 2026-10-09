@@ -2588,10 +2588,16 @@ test('a killed backend is replaced and the buffer keeps executing', function()
     exec.run_cell(buf)
     assert_true(vim.wait(20000, function() return output(1) == 'one\n' end, 10), 'first run failed: ' .. vim.inspect(messages))
     local first = backends[#backends]
-    -- B7: a backend killed by a signal orphans its kernels; remember them for cleanup.
     orphans = vim.split(vim.trim(vim.fn.system({ 'pgrep', '-P', tostring(first.pid) })), '\n', { trimempty = true })
+    assert_eq(#orphans, 1)
     vim.fn.system({ 'kill', '-9', tostring(first.pid) })
     assert_true(vim.wait(5000, function() return state.get(buf).session_id == nil end, 10), 'backend exit was not handled')
+    -- SIGKILL skips the backend's own cleanup; the kernel must notice that its
+    -- parent is gone (JPY_PARENT_PID, polled every second) and exit.
+    assert_true(vim.wait(5000, function()
+      vim.fn.system({ 'kill', '-0', orphans[1] })
+      return vim.v.shell_error ~= 0
+    end, 100), 'the kernel of the killed backend kept running')
 
     vim.api.nvim_win_set_cursor(0, { 4, 0 })
     exec.run_cell(buf)

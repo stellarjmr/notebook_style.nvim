@@ -194,6 +194,10 @@ impl Kernel {
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }
+        // Like jupyter_client: ipykernel polls this pid and exits once its
+        // parent is gone, so a backend killed by a signal (which skips
+        // kill_on_drop) does not leave the kernel running forever.
+        cmd.env("JPY_PARENT_PID", std::process::id().to_string());
         if let Some(d) = cwd {
             cmd.current_dir(d);
         }
@@ -826,6 +830,17 @@ mod tests {
             message.contains("No module named ipykernel_launcher"),
             "{message}"
         );
+    }
+
+    #[tokio::test]
+    async fn launch_tells_the_kernel_its_parent_pid() {
+        let message = launch_error(
+            spec(&["sh", "-c", "echo \"parent=$JPY_PARENT_PID\" >&2; exit 3"]),
+            STARTUP_TIMEOUT,
+        )
+        .await;
+        let expected = format!("parent={}", std::process::id());
+        assert!(message.contains(&expected), "{message}");
     }
 
     #[tokio::test]
