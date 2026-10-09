@@ -391,8 +391,9 @@ end
 
 function M.list_kernels(callback)
   -- No check for a backend that exited meanwhile: the list comes from the
-  -- kernelspecs on disk and does not involve any session, so a late reply is
-  -- still a correct answer to the user's request.
+  -- kernelspecs on disk, so a late reply is still a correct answer to the
+  -- user's request. A kernel picked from it applies to the buffer's current
+  -- session, like any selection.
   ensure_client():call('list_kernels', {}, function(err, result)
     if err then
       notify_failure('NotebookStyle list_kernels failed: ', err)

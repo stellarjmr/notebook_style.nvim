@@ -24,6 +24,12 @@ local function skip_now(reason)
   error({ skip = true, reason = reason }, 0)
 end
 
+-- Single-quote a string for /bin/sh. Unlike shellescape(), this does not
+-- depend on Neovim's 'shell' option, which may name csh or fish.
+local function sh_quote(text)
+  return "'" .. text:gsub("'", [['\'']]) .. "'"
+end
+
 -- An error raised in an asynchronous callback (vim.schedule, libuv, jobs) does
 -- not reach the test's pcall: Neovim only prints it and records the message in
 -- v:errmsg. The harness checks v:errmsg after every test and fails the test if
@@ -32,7 +38,8 @@ end
 --   nvim_echo(..., { err = true }): a test that expects error notifications
 --   must capture vim.notify.
 -- * An error is reported by the first test that checks after it happened,
---   which can be a later test; the message's traceback names the source.
+--   which can be a later test; for an exception raised in a callback, the
+--   message's traceback names its source.
 -- * A later empty error message, or code resetting v:errmsg, erases it.
 -- * After the last test only callbacks that come due within 50 ms are run and
 --   checked; later timers are neither run nor checked.
@@ -276,6 +283,13 @@ local function close_backends()
   vim.notify = old_notify
   assert_true(closed, 'backend did not exit after stdin EOF')
 end
+
+test('sh_quote round-trips awkward paths through /bin/sh', function()
+  for _, text in ipairs({ 'plain', 'with space', "it's", 'bang!', [[back\slash]], '$HOME', [["double"]] }) do
+    local out = vim.fn.system({ '/bin/sh', '-c', 'printf %s ' .. sh_quote(text) })
+    assert_eq(out, text, 'quoting must survive /bin/sh unchanged')
+  end
+end)
 
 test('setup registers commands and defaults', function()
   local notebook = require('notebook_style')
@@ -1056,8 +1070,16 @@ test('checkhealth reports Neovim older than 0.10 as unsupported', function()
       return real_has(feature)
     end
     local text = health_text()
-    assert_true(text:find('requires Neovim >= 0.10', 1, true) ~= nil, 'an older Neovim must be reported as unsupported: ' .. text)
-    assert_true(text:find('ERROR', 1, true) ~= nil, 'as an error: ' .. text)
+    -- Other sections can report errors too (e.g. no backend installed), so
+    -- the ERROR must be on the version line itself.
+    local version_line
+    for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
+      if line:find('requires Neovim >= 0.10', 1, true) then
+        version_line = line
+      end
+    end
+    assert_true(version_line ~= nil, 'an older Neovim must be reported as unsupported: ' .. text)
+    assert_true(version_line:find('ERROR', 1, true) ~= nil, 'as an error: ' .. version_line)
     assert_true(text:find('still works', 1, true) == nil, 'and without claiming that rendering still works')
   end)
 
@@ -2813,9 +2835,11 @@ test('auto_venv starts a local venv kernel when available', function()
     assert_eq(vim.fn.mkdir(project .. '/.venv/bin', 'p'), 1, 'failed to create temporary .venv')
     -- A wrapper, not a symlink: a symlinked venv interpreter no longer finds
     -- its pyvenv.cfg and loses the environment's packages (ipykernel), so a
-    -- symlink only works when python3 is not itself from a virtualenv.
+    -- symlink only works when python3 is not itself from a virtualenv. The
+    -- wrapper runs from the temporary directory, which must allow executing
+    -- files (not mounted noexec).
     local venv_python = project .. '/.venv/bin/python'
-    vim.fn.writefile({ '#!/bin/sh', 'exec ' .. vim.fn.shellescape(python) .. ' "$@"' }, venv_python)
+    vim.fn.writefile({ '#!/bin/sh', 'exec ' .. sh_quote(python) .. ' "$@"' }, venv_python)
     assert_eq(vim.fn.setfperm(venv_python, 'rwxr-xr-x'), 1, 'failed to make the temporary .venv python executable')
     vim.fn.writefile({ '# %%', "print('hello from auto_venv')" }, project .. '/sample.py')
 

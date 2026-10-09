@@ -12,11 +12,12 @@ run() {
   "$@"
 }
 
-# Run a Lua file in headless Neovim. `nvim -l` (Neovim 0.9+) exits non-zero
-# when the script itself raises, including the error lua_smoke.lua raises when
-# a test fails; `-c "luafile ..." -c 'qa!'` would exit 0. Errors raised in
-# asynchronous callbacks do not change the exit status: lua_smoke.lua checks
-# for those itself, and the summary check below covers the rest.
+# Run a Lua file in headless Neovim (0.10 or newer, like the plugin).
+# `nvim -l` exits non-zero when the script itself raises, including the error
+# lua_smoke.lua raises when a test fails; `-c "luafile ..." -c 'qa!'` would
+# exit 0. Errors raised in asynchronous callbacks do not change the exit
+# status: lua_smoke.lua checks for those itself, and the summary check below
+# catches a suite that stops early or prints anything after its summary.
 run_lua() {
   nvim --headless -u NONE -l "$@"
 }
