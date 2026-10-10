@@ -526,7 +526,7 @@ vim.keymap.set('n', '<leader>ns', '<cmd>NotebookStyleToggle<cr>', { desc = 'Togg
 
 - Neovim >= 0.10
 - A font that supports Unicode box-drawing characters (most modern terminal fonts)
-- To run cells: Python with `ipykernel`, 7.4 or newer. With ipykernel 7.0 to 7.3, cells run in quick succession can leave the kernel unresponsive until it is restarted; `:checkhealth notebook_style` warns about these versions.
+- To run cells: Python with `ipykernel`; 7.4 or newer is recommended (it needs Python 3.11 or newer; with an older Python, use ipykernel 6). With ipykernel 7.0 to 7.3, cells run in quick succession can leave the kernel unresponsive until it is restarted; `:checkhealth notebook_style` warns about these versions.
 - Jupytext if you want to edit `.ipynb` notebooks as `# %%` Python buffers
 
 ## Development Tests

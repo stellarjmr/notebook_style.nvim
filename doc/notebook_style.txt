@@ -233,8 +233,9 @@ are not executable and are skipped by RunCell and RunFile.
     Jupyter kernelspec per project. Set auto_venv = false to always use
     kernel_name instead.
 
-    Use ipykernel 7.4 or newer: with 7.0 to 7.3, cells run in quick
-    succession can leave the kernel unresponsive until it is restarted
+    Use ipykernel 7.4 or newer (with a Python older than 3.11, which 7.4
+    needs, use ipykernel 6): with 7.0 to 7.3, cells run in quick succession
+    can leave the kernel unresponsive until it is restarted
     (:checkhealth notebook_style warns about these versions).
 
     Inside tmux, enable passthrough with:

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- `:checkhealth notebook_style` reports the ipykernel version of the local `.venv` Python and of a Python kernelspec, and warns about ipykernel 7.0 to 7.3: those versions can stop handling requests when cells are run in quick succession, and the cells then stay busy until the kernel is restarted (fixed in ipykernel 7.4). README and help recommend ipykernel 7.4 or newer.
+- `:checkhealth notebook_style` reports the ipykernel version of the local `.venv` Python and of the kernelspec's Python when the kernelspec runs ipykernel directly (`python -m ipykernel_launcher`; wrappers such as `conda run` are not run), and warns about ipykernel 7.0 to 7.3: those versions can stop handling requests when cells are run in quick succession, and the cells then stay busy until the kernel is restarted (fixed in ipykernel 7.4; with a Python older than 3.11, which 7.4 needs, ipykernel 6 does not have the problem). It also warns when the program a kernelspec runs cannot be found. README and help recommend ipykernel 7.4 or newer.
 
 ### Fixed
 - `tests/run_all.sh` now fails when a Lua smoke test fails, the Lua suite raises an error, an error message is recorded while a test runs (for example by an exception in an asynchronous callback; the limits are listed at the top of `tests/lua_smoke.lua`), or the suite exits before reporting its results. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner uses `nvim -l`.

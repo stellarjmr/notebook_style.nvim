@@ -1248,58 +1248,195 @@ test('checkhealth looks for kernelspecs where the backend does', function()
   if not closed then error(close_err, 0) end
 end)
 
-test('checkhealth warns about ipykernel 7.0 to 7.3', function()
+--- A kernelspec setup for the ipykernel checks: a stand-in for Python, which
+--- records its arguments and answers the version query as the NBS_FAKE_*
+--- variables say, and kernelspecs under JUPYTER_PATH.
+local function ipykernel_check_fixture()
   local notebook = require('notebook_style')
   local root = vim.fn.tempname()
-  local old_jupyter_path = vim.env.JUPYTER_PATH
-  -- Stand-ins for a kernelspec's Python: they answer the version query.
-  local function python(name, lines)
-    local path = root .. '/bin/' .. name
-    vim.fn.writefile(vim.list_extend({ '#!/bin/sh' }, lines), path)
+  local saved = {}
+  for _, name in ipairs({ 'JUPYTER_PATH', 'NBS_FAKE_PYTHON_ARGS', 'NBS_FAKE_PYTHON_VERSION', 'NBS_FAKE_IPYKERNEL_VERSION', 'NBS_FAKE_EXIT' }) do
+    saved[name] = vim.env[name]
+  end
+  local fixture = { root = root, args_file = root .. '/args' }
+  local stand_in = {
+    '#!/bin/sh',
+    [[printf '%s\n' "$*" > "$NBS_FAKE_PYTHON_ARGS"]],
+    [[echo "${NBS_FAKE_PYTHON_VERSION:-3.12}"]],
+    [[if [ "${NBS_FAKE_EXIT:-0}" = 1 ]; then echo "ModuleNotFoundError: No module named 'ipykernel'" >&2; exit 1; fi]],
+    [[echo "$NBS_FAKE_IPYKERNEL_VERSION"]],
+    [[exit "${NBS_FAKE_EXIT:-0}"]],
+  }
+  --- Writes the stand-in (or `lines`) to `path`; returns `path`.
+  function fixture.python(path, lines)
+    vim.fn.mkdir(vim.fn.fnamemodify(path, ':h'), 'p')
+    vim.fn.writefile(lines or stand_in, path)
     vim.fn.setfperm(path, 'rwxr-xr-x')
     return path
   end
-  local function kernelspec(name, argv0, language)
-    vim.fn.mkdir(root .. '/kernels/' .. name, 'p')
-    vim.fn.writefile({ vim.fn.json_encode({
-      argv = { argv0, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
-      display_name = name, language = language,
-    }) }, root .. '/kernels/' .. name .. '/kernel.json')
+  function fixture.kernelspec(name, spec)
+    local dir = root .. '/kernels/' .. name
+    vim.fn.mkdir(dir, 'p')
+    spec.display_name = name
+    spec.language = spec.language or 'python'
+    vim.fn.writefile({ vim.fn.json_encode(spec) }, dir .. '/kernel.json')
+    return dir
   end
-  local function health_text(kernel_name)
-    notebook.setup({ keymaps = false, auto_venv = false, kernel_name = kernel_name })
+  --- The health report for `opts`, and the arguments the stand-in got (nil
+  --- if it did not run).
+  function fixture.health(opts)
+    vim.fn.delete(fixture.args_file)
+    notebook.setup(vim.tbl_extend('force', { keymaps = false, auto_venv = false }, opts))
     vim.cmd('checkhealth notebook_style')
     local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
     vim.cmd('bwipeout!')
-    return text
+    local args = vim.fn.filereadable(fixture.args_file) == 1 and vim.fn.readfile(fixture.args_file)[1] or nil
+    return text, args
   end
+  function fixture.line(text, plain)
+    for _, line in ipairs(vim.split(text, '\n', { plain = true })) do
+      if line:find(plain, 1, true) then
+        return line
+      end
+    end
+    return nil
+  end
+  function fixture.restore()
+    for name, value in pairs(saved) do
+      vim.env[name] = value
+    end
+    vim.fn.delete(root, 'rf')
+  end
+  vim.env.JUPYTER_PATH = root
+  vim.env.NBS_FAKE_PYTHON_ARGS = fixture.args_file
+  return fixture
+end
+
+test('checkhealth warns about ipykernel 7.0 to 7.3', function()
+  local f = ipykernel_check_fixture()
+  local old_cwd = vim.fn.getcwd()
 
   local ok, err = pcall(function()
-    vim.fn.mkdir(root .. '/bin', 'p')
-    kernelspec('nbs-ipk72', python('py72', { 'echo 7.2.0' }), 'python')
-    kernelspec('nbs-ipk74', python('py74', { 'echo 7.4.0' }), 'python')
-    kernelspec('nbs-noipk', python('pynone', { 'echo "ModuleNotFoundError: No module named ipykernel" >&2', 'exit 1' }), 'python')
-    kernelspec('nbs-julia', python('julia', { 'echo 7.2.0' }), 'julia')
-    vim.env.JUPYTER_PATH = root
+    -- A space in the path: the advice must quote it.
+    local python = f.python(f.root .. '/python bin/python')
+    local py = vim.fn.shellescape(python)
+    f.kernelspec('nbs-direct', { argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    local label = "kernelspec 'nbs-direct': "
 
-    local text = health_text('nbs-ipk72')
-    local line = text:match('[^\n]*ipykernel 7%.2%.0[^\n]*')
-    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'ipykernel 7.2.0 must be a warning: ' .. text)
-    assert_true(text:find('ipykernel>=7.4', 1, true) ~= nil, 'with the upgrade advice: ' .. text)
+    local cases = {
+      { '7.0.0', 'WARNING' }, { '7.2.0', 'WARNING' }, { '7.3.0', 'WARNING' },
+      { '7.4.0', 'OK' }, { '7.10.0', 'OK' }, { '8.0.0', 'OK' }, { '6.29.5', 'OK' },
+    }
+    for _, case in ipairs(cases) do
+      vim.env.NBS_FAKE_IPYKERNEL_VERSION = case[1]
+      local text, args = f.health({ kernel_name = 'nbs-direct' })
+      local line = f.line(text, label .. 'ipykernel ' .. case[1])
+      assert_true(line ~= nil and line:find(case[2], 1, true) ~= nil, ('ipykernel %s must be reported as %s: %s'):format(case[1], case[2], text))
+      assert_true(args ~= nil and vim.startswith(args, '-c import sys;'), 'the kernelspec Python is asked directly: ' .. tostring(args))
+      if case[2] == 'WARNING' then
+        assert_true(text:find(py .. ' -m pip install -U "ipykernel>=7.4"', 1, true) ~= nil, 'with the upgrade advice: ' .. text)
+        assert_true(text:find('uv pip install --python ' .. py .. ' -U "ipykernel>=7.4"', 1, true) ~= nil, 'also for a venv without pip: ' .. text)
+      end
+    end
 
-    text = health_text('nbs-ipk74')
-    line = text:match('[^\n]*ipykernel 7%.4%.0[^\n]*')
-    assert_true(line ~= nil and line:find('OK', 1, true) ~= nil, 'ipykernel 7.4.0 is reported as fine: ' .. text)
+    -- ipykernel 7.4 needs Python 3.11; with an older one, ipykernel 6 is the way out.
+    vim.env.NBS_FAKE_PYTHON_VERSION, vim.env.NBS_FAKE_IPYKERNEL_VERSION = '3.10', '7.3.0'
+    local text = f.health({ kernel_name = 'nbs-direct' })
+    local line = f.line(text, label .. 'ipykernel 7.3.0')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'ipykernel 7.3.0 on Python 3.10 is a warning: ' .. text)
+    assert_true(text:find('needs Python 3.11 or newer, and this is Python 3.10', 1, true) ~= nil, 'saying why 7.4 is not the advice: ' .. text)
+    assert_true(text:find(py .. ' -m pip install -U "ipykernel<7"', 1, true) ~= nil, 'and advising ipykernel 6: ' .. text)
+    assert_true(text:find('ipykernel>=7.4', 1, true) == nil, 'not 7.4: ' .. text)
+    vim.env.NBS_FAKE_PYTHON_VERSION = nil
 
-    text = health_text('nbs-noipk')
-    assert_true(text:find('cannot import ipykernel', 1, true) ~= nil, 'a Python without ipykernel is reported: ' .. text)
+    vim.env.NBS_FAKE_IPYKERNEL_VERSION = 'unknown'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    line = f.line(text, label .. 'could not read the ipykernel version')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) == nil and line:find('OK', 1, true) == nil, 'output that is not a version is reported as such: ' .. text)
 
-    text = health_text('nbs-julia')
-    assert_true(text:find('ipykernel 7', 1, true) == nil, 'a kernelspec that is not Python is not checked: ' .. text)
+    vim.env.NBS_FAKE_EXIT = '1'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    line = f.line(text, label .. python .. " cannot import ipykernel: ModuleNotFoundError: No module named 'ipykernel'")
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'a kernelspec Python without ipykernel cannot start the kernel: ' .. text)
+    assert_true(text:find(py .. ' -m pip install -U "ipykernel>=7.4"', 1, true) ~= nil, 'with the install advice: ' .. text)
+
+    -- vim.system reports a timeout as exit code 124, so a stand-in that exits
+    -- 124 takes that branch without the 5 s wait.
+    vim.env.NBS_FAKE_EXIT = '124'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    line = f.line(text, label .. 'could not read the ipykernel version of ' .. python .. ' within 5 s')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) == nil, 'a timeout is reported as such: ' .. text)
+    vim.env.NBS_FAKE_EXIT = nil
+
+    -- The local .venv Python is checked too; the stand-in also answers
+    -- auto_venv's own import check.
+    f.python(f.root .. '/project/.venv/bin/python')
+    vim.fn.chdir(f.root .. '/project')
+    vim.env.NBS_FAKE_IPYKERNEL_VERSION = '7.2.0'
+    text = f.health({ auto_venv = true, kernel_name = 'nbs-missing' })
+    line = f.line(text, 'auto_venv: ipykernel 7.2.0')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'the .venv Python with ipykernel 7.2.0 is a warning: ' .. text)
   end)
 
-  vim.env.JUPYTER_PATH = old_jupyter_path
-  vim.fn.delete(root, 'rf')
+  vim.fn.chdir(old_cwd)
+  f.restore()
+  if not ok then error(err, 0) end
+end)
+
+test('checkhealth runs a kernelspec only if it starts ipykernel directly', function()
+  local f = ipykernel_check_fixture()
+
+  local ok, err = pcall(function()
+    local python = f.python(f.root .. '/bin/python')
+    vim.env.NBS_FAKE_IPYKERNEL_VERSION = '7.2.0'
+
+    -- Wrappers are not Python, and running one could start a kernel.
+    f.kernelspec('nbs-script', { argv = { python, '-f', '{connection_file}' } })
+    f.kernelspec('nbs-env', { argv = { '/usr/bin/env', python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    f.kernelspec('nbs-julia', { argv = { python, '-m', 'ipykernel_launcher', '-f', '{connection_file}' }, language = 'julia' })
+    for _, name in ipairs({ 'nbs-script', 'nbs-env', 'nbs-julia' }) do
+      local text, args = f.health({ kernel_name = name })
+      assert_true(text:find(("kernelspec '%s' found"):format(name), 1, true) ~= nil, 'the kernelspec is found: ' .. text)
+      assert_eq(args, nil, name .. ' must not be run')
+      assert_true(text:find('ipykernel 7', 1, true) == nil, name .. ' gets no version line: ' .. text)
+    end
+
+    -- `ipykernel install` puts -Xfrozen_modules=off before -m: still checked,
+    -- with that option.
+    f.kernelspec('nbs-frozen', { argv = { python, '-Xfrozen_modules=off', '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    local text, args = f.health({ kernel_name = 'nbs-frozen' })
+    local line = f.line(text, "kernelspec 'nbs-frozen': ipykernel 7.2.0")
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'the usual installed kernelspec is checked: ' .. text)
+    assert_true(args ~= nil and vim.startswith(args, '-Xfrozen_modules=off -c import sys;'), 'with its interpreter options: ' .. tostring(args))
+
+    -- The kernelspec's env and {resource_dir}, as the backend applies them.
+    f.kernelspec('nbs-env-var', {
+      argv = { python, '-m', 'ipykernel', '-f', '{connection_file}' },
+      env = { NBS_FAKE_IPYKERNEL_VERSION = '7.1.0' },
+    })
+    text = f.health({ kernel_name = 'nbs-env-var' })
+    assert_true(f.line(text, "kernelspec 'nbs-env-var': ipykernel 7.1.0") ~= nil, 'the kernelspec env applies: ' .. text)
+    local dir = f.kernelspec('nbs-resource', { argv = { '{resource_dir}/python', '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    f.python(dir .. '/python')
+    text = f.health({ kernel_name = 'nbs-resource' })
+    assert_true(f.line(text, "kernelspec 'nbs-resource': ipykernel 7.2.0") ~= nil, '{resource_dir} is expanded: ' .. text)
+
+    -- A program that cannot be found or run is reported, and the rest of the
+    -- report still follows.
+    f.kernelspec('nbs-missing-program', { argv = { f.root .. '/no/python', '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    text = f.health({ kernel_name = 'nbs-missing-program' })
+    line = f.line(text, "kernelspec 'nbs-missing-program' runs " .. f.root .. '/no/python, which cannot be found')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'a missing program is a warning: ' .. text)
+    local broken = f.python(f.root .. '/bin/broken', { '#!/nonexistent/bin/python3', 'echo 7.2.0' })
+    f.kernelspec('nbs-broken', { argv = { broken, '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    text = f.health({ kernel_name = 'nbs-broken' })
+    line = f.line(text, "kernelspec 'nbs-broken': could not run " .. broken)
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'a program that cannot be started is a warning: ' .. text)
+    assert_true(text:find('Failed to run healthcheck', 1, true) == nil, 'the report is not cut short: ' .. text)
+    assert_true(text:find('notebook_style: terminal images', 1, true) ~= nil, 'the next section still follows: ' .. text)
+  end)
+
+  f.restore()
   if not ok then error(err, 0) end
 end)
 
