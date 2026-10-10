@@ -16,17 +16,21 @@
 // only tried, never waited for: a backend that does not get it (another one
 // is rotating at that moment) writes its line to the file it holds, which
 // then ends up in `.1`. A backend stopped while holding the lock therefore
-// only delays rotation.
+// only delays rotation. Where the lock file cannot be opened or locking
+// itself fails (a filesystem without flock), rotation goes without it.
 //
 // What stays on disk: about two limits, plus, until their next line, the
 // files that idle backends still hold after others rotated past them. A
 // line is lost only if two rotations happen between a backend's check and
-// its write. Logging is best effort: if the check, the lock or a rotation
-// fails, the backend keeps writing to the file it holds. The check compares
-// device and inode numbers, which only Unix provides; elsewhere a backend
-// only notices that the file is gone.
+// its write. Logging is best effort: if the check or a rotation fails, the
+// backend keeps writing to the file it holds. The check compares device and
+// inode numbers, which only Unix provides; elsewhere a backend only notices
+// that the file is gone. On macOS, after many processes renamed and created
+// the same name at once, `core.log` has been seen to resolve for a while to
+// the file just renamed to `core.log.1` while not being listed; rotations
+// then change nothing until that clears, and no line is lost.
 
-use std::fs::{File, Metadata, OpenOptions};
+use std::fs::{File, Metadata, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -77,12 +81,19 @@ impl RotatingLog {
             let _ = self.rotate();
             return;
         };
-        if lock.try_lock().is_ok() {
-            // Another backend may have rotated it since the check above.
-            if self.full(len) {
+        match lock.try_lock() {
+            Ok(()) => {
+                // Another backend may have rotated it since the check above.
+                if self.full(len) {
+                    let _ = self.rotate();
+                }
+                let _ = lock.unlock();
+            }
+            // Another backend is rotating it right now.
+            Err(TryLockError::WouldBlock) => {}
+            Err(TryLockError::Error(_)) => {
                 let _ = self.rotate();
             }
-            let _ = lock.unlock();
         }
         self.lock = Some(lock);
     }

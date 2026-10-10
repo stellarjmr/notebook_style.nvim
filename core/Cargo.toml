@@ -2,6 +2,8 @@
 name = "notebook-style-core"
 version = "0.1.0"
 edition = "2021"
+# File::lock and File::try_lock (the backend log)
+rust-version = "1.89"
 description = "Native backend for notebook_style.nvim — Python cell execution in Neovim"
 
 [[bin]]
