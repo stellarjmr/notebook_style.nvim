@@ -3114,6 +3114,15 @@ test('kernel connection files are private and removed with the kernel', function
     local dir = vim.fn.fnamemodify(path, ':h')
     assert_eq(vim.fn.getfperm(path), 'rw-------', 'only the user may read the connection file')
     assert_eq(vim.fn.getfperm(dir), 'rwx------', 'only the user may enter its directory')
+    -- ipykernel was given ports 0, bound ports itself and wrote them back into
+    -- the file; the rest of what the backend wrote is kept.
+    local info = vim.fn.json_decode(table.concat(vim.fn.readfile(path), '\n'))
+    for _, name in ipairs({ 'shell_port', 'iopub_port', 'stdin_port', 'control_port', 'hb_port' }) do
+      assert_true(type(info[name]) == 'number' and info[name] > 0, name .. ' must be a bound port: ' .. vim.inspect(info))
+    end
+    assert_eq(info.kernel_name, 'notebook-style-smoke')
+    assert_eq(info.signature_scheme, 'hmac-sha256')
+    assert_true(type(info.key) == 'string' and info.key ~= '', 'the key must be kept: ' .. vim.inspect(info))
 
     exec.stop_kernel(buf)
     assert_true(vim.wait(5000, function() return vim.fn.isdirectory(dir) == 0 end, 20), 'the connection file must be removed with the kernel: ' .. path)

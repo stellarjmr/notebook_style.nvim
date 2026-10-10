@@ -75,8 +75,21 @@ pub struct ConnectionInfo {
 impl ConnectionInfo {
     pub fn new_localhost(kernel_name: &str) -> Result<Self> {
         let ports = pick_ports(5)?;
-        let key = Uuid::new_v4().to_string();
-        Ok(Self {
+        Ok(Self::with_ports(
+            kernel_name,
+            [ports[0], ports[1], ports[2], ports[3], ports[4]],
+        ))
+    }
+
+    /// All ports 0: for a kernel that binds ports itself and writes them back
+    /// into its connection file (see `binds_own_ports`).
+    fn unbound(kernel_name: &str) -> Self {
+        Self::with_ports(kernel_name, [0; 5])
+    }
+
+    /// `ports` in the order shell, iopub, stdin, control, hb.
+    fn with_ports(kernel_name: &str, ports: [u16; 5]) -> Self {
+        Self {
             ip: "127.0.0.1".to_string(),
             transport: "tcp".to_string(),
             shell_port: ports[0],
@@ -84,15 +97,39 @@ impl ConnectionInfo {
             stdin_port: ports[2],
             control_port: ports[3],
             hb_port: ports[4],
-            key,
+            key: Uuid::new_v4().to_string(),
             signature_scheme: "hmac-sha256".to_string(),
             kernel_name: kernel_name.to_string(),
-        })
+        }
     }
 
     pub fn endpoint(&self, port: u16) -> String {
         format!("{}://{}:{}", self.transport, self.ip, port)
     }
+}
+
+/// Whether the kernelspec runs ipykernel directly: an interpreter, options
+/// written as one word each (like `-Xfrozen_modules=off`), then
+/// `-m ipykernel_launcher` (what `ipykernel install` writes, and the
+/// auto_venv kernels) or `-m ipykernel`. ipykernel binds the ports it finds
+/// as 0 in its connection file and writes the ports it bound back into that
+/// file. Other kernels are given ports picked here, which something else
+/// can take in the moment between picking and binding. So are kernelspecs
+/// that hand the file to a wrapper (`sh -c ...`, `conda run ...`, tools that
+/// forward the ports to another machine): the wrapper may need the ports in
+/// the file, and the kernel it starts may not write back to that file.
+/// `:checkhealth` uses the same rule (`ipykernel_options` in
+/// lua/notebook_style/health.lua).
+fn binds_own_ports(spec: &KernelSpec) -> bool {
+    let mut args = spec
+        .argv
+        .iter()
+        .skip(1)
+        .skip_while(|arg| arg.starts_with('-') && arg.as_str() != "-m");
+    args.next().is_some_and(|arg| arg == "-m")
+        && args
+            .next()
+            .is_some_and(|module| module == "ipykernel_launcher" || module == "ipykernel")
 }
 
 fn pick_ports(n: usize) -> Result<Vec<u16>> {
@@ -210,11 +247,16 @@ impl Kernel {
         cwd: Option<PathBuf>,
         startup_timeout: Duration,
     ) -> Result<Self> {
-        let conn = ConnectionInfo::new_localhost(&spec.name)?;
+        let own_ports = binds_own_ports(&spec);
+        let conn = if own_ports {
+            ConnectionInfo::unbound(&spec.name)
+        } else {
+            ConnectionInfo::new_localhost(&spec.name)?
+        };
         // Removed again when this function fails, or with the kernel.
         let conn_file = ConnectionFile::create(&std::env::temp_dir(), &conn)?;
         let conn_path = conn_file.path.clone();
-        tracing::info!(?conn_path, kernel = %spec.name, "launching kernel");
+        tracing::info!(?conn_path, kernel = %spec.name, own_ports, "launching kernel");
 
         let argv: Vec<String> = spec
             .argv
@@ -280,9 +322,18 @@ impl Kernel {
         // that dies or never binds its ports would hang here. Race the
         // connection against the kernel exiting and a deadline; on failure the
         // child is dropped, which kills it (kill_on_drop).
-        let (shell, control, iopub) = tokio::select! {
-            sockets = connect_sockets(&conn) => {
-                sockets.map_err(|e| anyhow!("{e:#}{}", format_tail(&stderr_tail)))?
+        let connect = async {
+            let conn = if own_ports {
+                read_bound_ports(&conn_path, &conn).await?
+            } else {
+                conn.clone()
+            };
+            let sockets = connect_sockets(&conn).await?;
+            anyhow::Ok((conn, sockets))
+        };
+        let (conn, (shell, control, iopub)) = tokio::select! {
+            connected = connect => {
+                connected.map_err(|e| anyhow!("{e:#}{}", format_tail(&stderr_tail)))?
             }
             status = child.wait() => {
                 if let Some(drained) = stderr_drained {
@@ -300,8 +351,13 @@ impl Kernel {
                 ));
             }
             _ = tokio::time::sleep(startup_timeout) => {
+                let what = if own_ports {
+                    "write the ports it bound to its connection file"
+                } else {
+                    "open its ports"
+                };
                 return Err(anyhow!(
-                    "kernel '{}' did not open its ports within {startup_timeout:?}{}",
+                    "kernel '{}' did not {what} within {startup_timeout:?}{}",
                     spec.name,
                     format_tail(&stderr_tail)
                 ));
@@ -662,6 +718,54 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir(dir)
+}
+
+/// Wait until the kernel has written the ports it bound into its connection
+/// file, and return `conn` with those ports. ipykernel writes the file with
+/// jupyter_client's secure_write, which removes it and writes it anew, so it
+/// can briefly be missing, empty or partly written: all of that means "not
+/// yet". A complete file with a different key is an error. Kernel::launch
+/// bounds the wait.
+async fn read_bound_ports(path: &Path, conn: &ConnectionInfo) -> Result<ConnectionInfo> {
+    loop {
+        if let Some(written) = tokio::fs::read(path)
+            .await
+            .ok()
+            .and_then(|text| serde_json::from_slice::<Value>(&text).ok())
+        {
+            if written
+                .get("key")
+                .and_then(|k| k.as_str())
+                .is_some_and(|k| k != conn.key)
+            {
+                return Err(anyhow!("the kernel's connection file has a different key"));
+            }
+            let port = |name: &str| {
+                written
+                    .get(name)
+                    .and_then(|p| p.as_u64())
+                    .and_then(|p| u16::try_from(p).ok())
+                    .filter(|p| *p != 0)
+            };
+            if let (Some(shell), Some(iopub), Some(stdin), Some(control), Some(hb)) = (
+                port("shell_port"),
+                port("iopub_port"),
+                port("stdin_port"),
+                port("control_port"),
+                port("hb_port"),
+            ) {
+                return Ok(ConnectionInfo {
+                    shell_port: shell,
+                    iopub_port: iopub,
+                    stdin_port: stdin,
+                    control_port: control,
+                    hb_port: hb,
+                    ..conn.clone()
+                });
+            }
+        }
+        tokio::time::sleep(PORT_POLL_INTERVAL).await;
+    }
 }
 
 async fn connect_sockets(conn: &ConnectionInfo) -> Result<(DealerSocket, DealerSocket, SubSocket)> {
@@ -1292,5 +1396,193 @@ mod tests {
             message.contains("did not open its ports within 500ms"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn only_ipykernel_kernels_bind_their_own_ports() {
+        let ipykernel = [
+            &[
+                "python3",
+                "-m",
+                "ipykernel_launcher",
+                "-f",
+                "{connection_file}",
+            ][..],
+            &[
+                "/p/.venv/bin/python",
+                "-m",
+                "ipykernel",
+                "-f",
+                "{connection_file}",
+            ][..],
+            &[
+                "/usr/bin/python3.12",
+                "-Xfrozen_modules=off",
+                "-m",
+                "ipykernel_launcher",
+                "-f",
+                "{connection_file}",
+            ][..],
+        ];
+        for argv in ipykernel {
+            assert!(binds_own_ports(&spec(argv)), "{argv:?}");
+        }
+        let others = [
+            &["julia", "-i", "kernel.jl", "{connection_file}"][..],
+            &[
+                "R",
+                "--slave",
+                "-e",
+                "IRkernel::main()",
+                "--args",
+                "{connection_file}",
+            ][..],
+            &["sleep", "30"][..],
+            // Wrappers that are handed the file keep the ports picked here.
+            &[
+                "sh",
+                "-c",
+                "exec python3 -m ipykernel_launcher -f \"$1\"",
+                "sh",
+                "{connection_file}",
+            ][..],
+            &[
+                "conda",
+                "run",
+                "-n",
+                "work",
+                "python",
+                "-m",
+                "ipykernel_launcher",
+                "-f",
+                "{connection_file}",
+            ][..],
+            &[
+                "python3",
+                "-m",
+                "ssh_ipykernel",
+                "--host",
+                "remote",
+                "-f",
+                "{connection_file}",
+            ][..],
+        ];
+        for argv in others {
+            assert!(!binds_own_ports(&spec(argv)), "{argv:?}");
+        }
+    }
+
+    /// The connection file as the kernel would write it, with `ports` in
+    /// the order shell, iopub, stdin, control, hb.
+    fn written_by_kernel(conn: &ConnectionInfo, key: &str, ports: [u16; 5]) -> Vec<u8> {
+        serde_json::to_vec_pretty(&json!({
+            "ip": conn.ip,
+            "transport": conn.transport,
+            "shell_port": ports[0],
+            "iopub_port": ports[1],
+            "stdin_port": ports[2],
+            "control_port": ports[3],
+            "hb_port": ports[4],
+            "key": key,
+            "signature_scheme": conn.signature_scheme,
+            "kernel_name": conn.kernel_name,
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn read_bound_ports_waits_for_the_complete_file() {
+        let conn = ConnectionInfo::unbound("test-kernel");
+        let file = ConnectionFile::create(&std::env::temp_dir(), &conn).unwrap();
+        let path = file.path.clone();
+        let full = written_by_kernel(&conn, &conn.key, [5101, 5102, 5103, 5104, 5105]);
+        // What secure_write leaves on the way: no file, an empty file, part of
+        // the JSON, then all of it. The file it started from has ports 0.
+        let writer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            std::fs::remove_file(&path).unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            std::fs::write(&path, b"").unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            std::fs::write(&path, &full[..full.len() / 2]).unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            std::fs::write(&path, &full).unwrap();
+        });
+        let bound =
+            tokio::time::timeout(Duration::from_secs(5), read_bound_ports(&file.path, &conn))
+                .await
+                .expect("the ports must be read")
+                .expect("the file is valid");
+        writer.await.unwrap();
+        assert_eq!(
+            [
+                bound.shell_port,
+                bound.iopub_port,
+                bound.stdin_port,
+                bound.control_port,
+                bound.hb_port
+            ],
+            [5101, 5102, 5103, 5104, 5105]
+        );
+        assert_eq!(bound.key, conn.key);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn launch_gives_ipykernel_ports_0_and_other_kernels_picked_ports() {
+        use std::os::unix::fs::PermissionsExt;
+        // Also keeps other tests from forking while the script below is
+        // open for writing, which would make running it fail (ETXTBSY).
+        let _serial = serial();
+        // Stands in for "python -m <module> -f <connection file>": shows the
+        // shell port in the file it was given, then exits.
+        let dir = std::env::temp_dir().join(format!("notebook-style-test-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let python = dir.join("python");
+        std::fs::write(
+            &python,
+            "#!/bin/sh\ngrep -o '\"shell_port\": [0-9]*' \"$4\" >&2\nexit 3\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let python = python.to_str().unwrap();
+        let ipykernel = launch_error(
+            spec(&[
+                python,
+                "-m",
+                "ipykernel_launcher",
+                "-f",
+                "{connection_file}",
+            ]),
+            STARTUP_TIMEOUT,
+        )
+        .await;
+        let other = launch_error(
+            spec(&[python, "-m", "other_kernel", "-f", "{connection_file}"]),
+            STARTUP_TIMEOUT,
+        )
+        .await;
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Exiting before it wrote its ports is reported as an exit.
+        assert!(ipykernel.contains("exited during startup"), "{ipykernel}");
+        assert!(ipykernel.contains("\"shell_port\": 0"), "{ipykernel}");
+        assert!(other.contains("\"shell_port\": "), "{other}");
+        assert!(!other.contains("\"shell_port\": 0"), "{other}");
+    }
+
+    #[tokio::test]
+    async fn read_bound_ports_rejects_a_file_with_another_key() {
+        let conn = ConnectionInfo::unbound("test-kernel");
+        let file = ConnectionFile::create(&std::env::temp_dir(), &conn).unwrap();
+        std::fs::write(
+            &file.path,
+            written_by_kernel(&conn, "not-our-key", [5101, 5102, 5103, 5104, 5105]),
+        )
+        .unwrap();
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), read_bound_ports(&file.path, &conn))
+                .await
+                .expect("must not wait");
+        assert!(result.is_err(), "{result:?}");
     }
 }
