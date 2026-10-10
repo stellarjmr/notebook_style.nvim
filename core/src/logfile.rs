@@ -2,20 +2,29 @@
 //
 // Kernel stdout and stderr go into the log too, so it could grow without end.
 // Once the log file reaches its limit it is renamed to `<name>.1` (replacing
-// an older one) and a new file is started, so at most about two limits' worth
-// of log stays on disk. A file that is already full is rotated by the first
-// write (the backend logs a line as soon as it starts).
+// an older one) and a new file is started. A file that is already full is
+// rotated by the first write (the backend logs a line as soon as it starts).
 //
 // Several backends (one per Neovim) share the file. Before each write a
 // backend checks that the path still names the file it holds: if another
 // backend has rotated it, or it was deleted, the backend opens the file now
-// at the path. So no backend keeps writing to a file that another rotation
-// removes, and a full log is rotated once, not once per backend. The size
-// compared with the limit is the file's, so the limit holds for all backends
-// together, give or take one line each. Two backends that both check and
-// then rename within the same few microseconds can still rotate twice. The
-// check compares device and inode numbers, which only Unix provides;
-// elsewhere a backend only notices that the file is gone.
+// at the path. The size compared with the limit is the file's, so the limit
+// holds for all backends together, give or take the lines they write while
+// one of them is rotating. A backend rotates only while it holds the lock on
+// `<name>.lock`, and checks the size again first, so a full log is rotated
+// once even when several backends find it full at the same time. The lock is
+// only tried, never waited for: a backend that does not get it (another one
+// is rotating at that moment) writes its line to the file it holds, which
+// then ends up in `.1`. A backend stopped while holding the lock therefore
+// only delays rotation.
+//
+// What stays on disk: about two limits, plus, until their next line, the
+// files that idle backends still hold after others rotated past them. A
+// line is lost only if two rotations happen between a backend's check and
+// its write. Logging is best effort: if the check, the lock or a rotation
+// fails, the backend keeps writing to the file it holds. The check compares
+// device and inode numbers, which only Unix provides; elsewhere a backend
+// only notices that the file is gone.
 
 use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, Write};
@@ -25,19 +34,57 @@ pub struct RotatingLog {
     path: PathBuf,
     file: File,
     limit: u64,
+    /// `<name>.lock`; None if it could not be opened, and then rotation
+    /// goes without it.
+    lock: Option<File>,
 }
 
 impl RotatingLog {
     /// Open `path` for appending.
     pub fn open(path: PathBuf, limit: u64) -> io::Result<Self> {
         let file = open_append(&path)?;
-        Ok(Self { path, file, limit })
+        let lock = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(with_suffix(&path, ".lock"))
+            .ok();
+        Ok(Self {
+            path,
+            file,
+            limit,
+            lock,
+        })
     }
 
     fn rotated_path(&self) -> PathBuf {
-        let mut name = self.path.clone().into_os_string();
-        name.push(".1");
-        PathBuf::from(name)
+        with_suffix(&self.path, ".1")
+    }
+
+    /// Whether `len` more bytes would take the file at `path` past the limit.
+    /// A line longer than the limit still goes into an empty file.
+    fn full(&mut self, len: usize) -> bool {
+        self.current_size()
+            .is_ok_and(|size| size > 0 && size + len as u64 > self.limit)
+    }
+
+    /// Rotate the log if `len` more bytes would take it past the limit, under
+    /// the lock (see the top of this file).
+    fn rotate_if_full(&mut self, len: usize) {
+        if !self.full(len) {
+            return;
+        }
+        let Some(lock) = self.lock.take() else {
+            let _ = self.rotate();
+            return;
+        };
+        if lock.try_lock().is_ok() {
+            // Another backend may have rotated it since the check above.
+            if self.full(len) {
+                let _ = self.rotate();
+            }
+            let _ = lock.unlock();
+        }
+        self.lock = Some(lock);
     }
 
     /// The size of the file at `path`, after switching to that file if it is
@@ -68,6 +115,12 @@ fn open_append(path: &Path) -> io::Result<File> {
     OpenOptions::new().create(true).append(true).open(path)
 }
 
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
 #[cfg(unix)]
 fn same_file(a: &Metadata, b: &Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -81,12 +134,7 @@ fn same_file(_: &Metadata, _: &Metadata) -> bool {
 
 impl Write for RotatingLog {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        // If checking or rotating fails, keep logging to the file held.
-        if let Ok(size) = self.current_size() {
-            if size > 0 && size + buf.len() as u64 > self.limit {
-                let _ = self.rotate();
-            }
-        }
+        self.rotate_if_full(buf.len());
         self.file.write(buf)
     }
 
@@ -174,6 +222,38 @@ mod tests {
         second.write_all(b"second starting\n").unwrap();
         assert_eq!(dir.read("core.log.1"), "x".repeat(50));
         assert_eq!(dir.read("core.log"), "first starting\nsecond starting\n");
+    }
+
+    #[test]
+    fn a_backend_does_not_rotate_while_another_holds_the_lock() {
+        let dir = Dir::new();
+        let path = dir.0.join("core.log");
+        std::fs::write(&path, "x".repeat(50)).unwrap();
+        let mut log = RotatingLog::open(path, 40).unwrap();
+        // Another backend in the middle of a rotation.
+        let other = File::open(dir.0.join("core.log.lock")).unwrap();
+        other.lock().unwrap();
+        log.write_all(b"while locked\n").unwrap();
+        assert_eq!(dir.read("core.log.1"), "");
+        assert_eq!(dir.read("core.log"), "x".repeat(50) + "while locked\n");
+        other.unlock().unwrap();
+        log.write_all(b"after\n").unwrap();
+        assert_eq!(dir.read("core.log.1"), "x".repeat(50) + "while locked\n");
+        assert_eq!(dir.read("core.log"), "after\n");
+    }
+
+    #[test]
+    fn a_line_longer_than_the_limit_goes_into_an_empty_log() {
+        let dir = Dir::new();
+        std::fs::write(dir.0.join("core.log.1"), "older\n").unwrap();
+        let mut log = RotatingLog::open(dir.0.join("core.log"), 10).unwrap();
+        log.write_all(b"longer than ten bytes\n").unwrap();
+        // The empty log is not rotated over the previous one.
+        assert_eq!(dir.read("core.log"), "longer than ten bytes\n");
+        assert_eq!(dir.read("core.log.1"), "older\n");
+        log.write_all(b"next\n").unwrap();
+        assert_eq!(dir.read("core.log.1"), "longer than ten bytes\n");
+        assert_eq!(dir.read("core.log"), "next\n");
     }
 
     #[test]
