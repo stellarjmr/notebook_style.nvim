@@ -545,6 +545,8 @@ expressions, persistent variables, streaming output, errors, automatic PNGs,
 silent reruns, and interruption. Test kernelspecs and environment links live
 only in temporary directories.
 
+GitHub Actions runs `tests/run_all.sh` on Linux and macOS for every push and pull request, with `ipykernel` (7.4 or newer) and `matplotlib` installed so the kernel tests run too (`.github/workflows/test.yml`). The release workflow runs the same tests before it builds the backend binaries.
+
 For a visual check, open a Python buffer without delimiters, run `value = 17`
 followed by `value`, and confirm no output or code borders appear. Add
 `print(value)` and a Matplotlib plot, rerun, and check the output at EOF. Remove

@@ -1,0 +1,54 @@
+name: test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  # The release workflow runs these tests before it builds anything.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      # A fixed version, so that a new Neovim release cannot change the
+      # result unnoticed; raise it deliberately.
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: v0.12.5
+
+      # With python3 able to import ipykernel (and matplotlib) the suite also
+      # runs its real-kernel tests. ipykernel 7.0 to 7.3 can stop handling
+      # requests when cells run in quick succession; 7.4 fixes that.
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ipykernel
+        run: python -m pip install 'ipykernel>=7.4' matplotlib
+
+      - name: Run tests
+        run: tests/run_all.sh
