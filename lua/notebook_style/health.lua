@@ -112,6 +112,46 @@ local function find_kernelspec(name)
   return nil
 end
 
+--- ipykernel 7.0 to 7.3 can stop handling requests when one arrives while it
+--- sends a reply (fixed in 7.4.0): cells run in quick succession then stay
+--- busy until the kernel is restarted. Report the version a Python would run.
+local function check_ipykernel_version(python, label)
+  local result = vim.system({ python, '-c', 'import ipykernel; print(ipykernel.__version__)' }, { text = true }):wait(5000)
+  if result.code == 124 then
+    health.info(('%s: could not read the ipykernel version of %s within 5 s'):format(label, python))
+    return
+  end
+  if result.code ~= 0 then
+    health.info(('%s: %s cannot import ipykernel'):format(label, python))
+    return
+  end
+  local version = vim.trim(result.stdout or '')
+  local major, minor = version:match('^(%d+)%.(%d+)')
+  if not major then
+    health.info(('%s: could not read the ipykernel version of %s: %s'):format(label, python, version))
+  elseif tonumber(major) == 7 and tonumber(minor) < 4 then
+    health.warn(
+      ('%s: ipykernel %s can stop handling requests when cells are run in quick succession; they then stay busy until the kernel is restarted (fixed in ipykernel 7.4)'):format(label, version),
+      { ('Upgrade it: %s -m pip install -U "ipykernel>=7.4"'):format(python) }
+    )
+  else
+    health.ok(('%s: ipykernel %s'):format(label, version))
+  end
+end
+
+--- The Python a kernelspec runs, if it is a Python kernel started directly.
+local function kernelspec_python(spec_dir)
+  local ok, spec = pcall(vim.fn.json_decode, table.concat(vim.fn.readfile(spec_dir .. '/kernel.json'), '\n'))
+  if not ok or type(spec) ~= 'table' or spec.language ~= 'python' or type(spec.argv) ~= 'table' then
+    return nil
+  end
+  local python = spec.argv[1]
+  if type(python) == 'string' and vim.fn.executable(python) == 1 then
+    return python
+  end
+  return nil
+end
+
 local function check_kernel(opts)
   health.start('notebook_style: Jupyter kernel')
 
@@ -122,6 +162,7 @@ local function check_kernel(opts)
     venv_python, venv_warning = exec._find_local_venv_python(vim.fn.getcwd())
     if venv_python then
       health.ok('auto_venv: local .venv Python with ipykernel: ' .. venv_python)
+      check_ipykernel_version(venv_python, 'auto_venv')
     elseif venv_warning then
       health.warn('auto_venv: ' .. venv_warning, {
         'Install ipykernel into the venv, e.g. .venv/bin/python -m pip install ipykernel',
@@ -138,6 +179,10 @@ local function check_kernel(opts)
   local spec_dir = find_kernelspec(kernel_name)
   if spec_dir then
     health.ok(("kernelspec '%s' found: %s"):format(kernel_name, spec_dir))
+    local spec_python = kernelspec_python(spec_dir)
+    if spec_python then
+      check_ipykernel_version(spec_python, ("kernelspec '%s'"):format(kernel_name))
+    end
   elseif venv_python then
     health.info(("kernelspec '%s' not found, but the local .venv kernel is available"):format(kernel_name))
   else

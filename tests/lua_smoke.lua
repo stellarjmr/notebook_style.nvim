@@ -1248,6 +1248,61 @@ test('checkhealth looks for kernelspecs where the backend does', function()
   if not closed then error(close_err, 0) end
 end)
 
+test('checkhealth warns about ipykernel 7.0 to 7.3', function()
+  local notebook = require('notebook_style')
+  local root = vim.fn.tempname()
+  local old_jupyter_path = vim.env.JUPYTER_PATH
+  -- Stand-ins for a kernelspec's Python: they answer the version query.
+  local function python(name, lines)
+    local path = root .. '/bin/' .. name
+    vim.fn.writefile(vim.list_extend({ '#!/bin/sh' }, lines), path)
+    vim.fn.setfperm(path, 'rwxr-xr-x')
+    return path
+  end
+  local function kernelspec(name, argv0, language)
+    vim.fn.mkdir(root .. '/kernels/' .. name, 'p')
+    vim.fn.writefile({ vim.fn.json_encode({
+      argv = { argv0, '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      display_name = name, language = language,
+    }) }, root .. '/kernels/' .. name .. '/kernel.json')
+  end
+  local function health_text(kernel_name)
+    notebook.setup({ keymaps = false, auto_venv = false, kernel_name = kernel_name })
+    vim.cmd('checkhealth notebook_style')
+    local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+    vim.cmd('bwipeout!')
+    return text
+  end
+
+  local ok, err = pcall(function()
+    vim.fn.mkdir(root .. '/bin', 'p')
+    kernelspec('nbs-ipk72', python('py72', { 'echo 7.2.0' }), 'python')
+    kernelspec('nbs-ipk74', python('py74', { 'echo 7.4.0' }), 'python')
+    kernelspec('nbs-noipk', python('pynone', { 'echo "ModuleNotFoundError: No module named ipykernel" >&2', 'exit 1' }), 'python')
+    kernelspec('nbs-julia', python('julia', { 'echo 7.2.0' }), 'julia')
+    vim.env.JUPYTER_PATH = root
+
+    local text = health_text('nbs-ipk72')
+    local line = text:match('[^\n]*ipykernel 7%.2%.0[^\n]*')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'ipykernel 7.2.0 must be a warning: ' .. text)
+    assert_true(text:find('ipykernel>=7.4', 1, true) ~= nil, 'with the upgrade advice: ' .. text)
+
+    text = health_text('nbs-ipk74')
+    line = text:match('[^\n]*ipykernel 7%.4%.0[^\n]*')
+    assert_true(line ~= nil and line:find('OK', 1, true) ~= nil, 'ipykernel 7.4.0 is reported as fine: ' .. text)
+
+    text = health_text('nbs-noipk')
+    assert_true(text:find('cannot import ipykernel', 1, true) ~= nil, 'a Python without ipykernel is reported: ' .. text)
+
+    text = health_text('nbs-julia')
+    assert_true(text:find('ipykernel 7', 1, true) == nil, 'a kernelspec that is not Python is not checked: ' .. text)
+  end)
+
+  vim.env.JUPYTER_PATH = old_jupyter_path
+  vim.fn.delete(root, 'rf')
+  if not ok then error(err, 0) end
+end)
+
 test('a failed backend download keeps the installed backend', function()
   local install = require('notebook_style.install')
   if not install._detect_target() then

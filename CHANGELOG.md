@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `:checkhealth notebook_style` reports the ipykernel version of the local `.venv` Python and of a Python kernelspec, and warns about ipykernel 7.0 to 7.3: those versions can stop handling requests when cells are run in quick succession, and the cells then stay busy until the kernel is restarted (fixed in ipykernel 7.4). README and help recommend ipykernel 7.4 or newer.
+
 ### Fixed
 - `tests/run_all.sh` now fails when a Lua smoke test fails, the Lua suite raises an error, an error message is recorded while a test runs (for example by an exception in an asynchronous callback; the limits are listed at the top of `tests/lua_smoke.lua`), or the suite exits before reporting its results. Previously the headless Neovim step always exited 0, so failures only showed up in the log. The runner uses `nvim -l`.
 - If the execution backend exits unexpectedly (crash or kill), buffers no longer stay stuck with `no session` errors: requests in flight fail instead of waiting forever, without an error message per request; the kernel state is reset and the exit is reported once (lines the backend wrote to stderr are still shown, as before); replies that arrive from the exited backend no longer change a buffer's session (a kernel list that arrives late can still be used to pick a kernel); and the next run starts a new backend and kernel. Existing outputs stay visible.
