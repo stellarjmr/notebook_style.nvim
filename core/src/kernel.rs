@@ -119,7 +119,9 @@ impl ConnectionInfo {
 /// forward the ports to another machine): the wrapper may need the ports in
 /// the file, and the kernel it starts may not write back to that file.
 /// `:checkhealth` uses the same rule (`ipykernel_options` in
-/// lua/notebook_style/health.lua).
+/// lua/notebook_style/health.lua). The heartbeat port is the exception:
+/// ipykernel picks a free port and binds it a moment later, as the backend
+/// used to. The backend does not use the heartbeat.
 fn binds_own_ports(spec: &KernelSpec) -> bool {
     let mut args = spec
         .argv
