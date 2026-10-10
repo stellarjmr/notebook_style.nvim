@@ -50,5 +50,12 @@ jobs:
       - name: Install ipykernel
         run: python -m pip install 'ipykernel>=7.4' matplotlib
 
+      # A fresh runner has no matplotlib font cache. Without this step the
+      # first kernel builds it while running `%matplotlib inline`, which
+      # takes about 12 s even on a fast Mac and counts against the first
+      # real-kernel test's 20 s limit.
+      - name: Build the matplotlib font cache
+        run: python -c 'import matplotlib.pyplot'
+
       - name: Run tests
         run: tests/run_all.sh
