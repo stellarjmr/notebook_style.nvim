@@ -1254,17 +1254,19 @@ end)
 local function ipykernel_check_fixture()
   local notebook = require('notebook_style')
   local root = vim.fn.tempname()
+  -- false for a variable that was not set, so that restore() unsets it.
   local saved = {}
-  for _, name in ipairs({ 'JUPYTER_PATH', 'NBS_FAKE_PYTHON_ARGS', 'NBS_FAKE_PYTHON_VERSION', 'NBS_FAKE_IPYKERNEL_VERSION', 'NBS_FAKE_EXIT' }) do
-    saved[name] = vim.env[name]
+  for _, name in ipairs({ 'PATH', 'JUPYTER_PATH', 'NBS_FAKE_PYTHON_ARGS', 'NBS_FAKE_STARTUP_LINE', 'NBS_FAKE_PYTHON_VERSION', 'NBS_FAKE_IPYKERNEL_VERSION', 'NBS_FAKE_EXIT' }) do
+    saved[name] = vim.env[name] or false
   end
   local fixture = { root = root, args_file = root .. '/args' }
   local stand_in = {
     '#!/bin/sh',
     [[printf '%s\n' "$*" > "$NBS_FAKE_PYTHON_ARGS"]],
-    [[echo "${NBS_FAKE_PYTHON_VERSION:-3.12}"]],
-    [[if [ "${NBS_FAKE_EXIT:-0}" = 1 ]; then echo "ModuleNotFoundError: No module named 'ipykernel'" >&2; exit 1; fi]],
-    [[echo "$NBS_FAKE_IPYKERNEL_VERSION"]],
+    [[if [ -n "$NBS_FAKE_STARTUP_LINE" ]; then echo "$NBS_FAKE_STARTUP_LINE"; fi]],
+    [[echo "notebook_style:python=${NBS_FAKE_PYTHON_VERSION:-3.12}"]],
+    [[if [ "${NBS_FAKE_EXIT:-0}" = 1 ]; then echo 'Traceback (most recent call last):' >&2; echo "ModuleNotFoundError: No module named 'ipykernel'" >&2; exit 1; fi]],
+    [[echo "notebook_style:ipykernel=$NBS_FAKE_IPYKERNEL_VERSION"]],
     [[exit "${NBS_FAKE_EXIT:-0}"]],
   }
   --- Writes the stand-in (or `lines`) to `path`; returns `path`.
@@ -1303,7 +1305,7 @@ local function ipykernel_check_fixture()
   end
   function fixture.restore()
     for name, value in pairs(saved) do
-      vim.env[name] = value
+      vim.env[name] = value or nil
     end
     vim.fn.delete(root, 'rf')
   end
@@ -1313,6 +1315,7 @@ local function ipykernel_check_fixture()
 end
 
 test('checkhealth warns about ipykernel 7.0 to 7.3', function()
+  local jupyter_path, fake_version = vim.env.JUPYTER_PATH, vim.env.NBS_FAKE_IPYKERNEL_VERSION
   local f = ipykernel_check_fixture()
   local old_cwd = vim.fn.getcwd()
 
@@ -1347,7 +1350,25 @@ test('checkhealth warns about ipykernel 7.0 to 7.3', function()
     assert_true(text:find('needs Python 3.11 or newer, and this is Python 3.10', 1, true) ~= nil, 'saying why 7.4 is not the advice: ' .. text)
     assert_true(text:find(py .. ' -m pip install -U "ipykernel<7"', 1, true) ~= nil, 'and advising ipykernel 6: ' .. text)
     assert_true(text:find('ipykernel>=7.4', 1, true) == nil, 'not 7.4: ' .. text)
+    vim.env.NBS_FAKE_EXIT = '1'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    assert_true(text:find('needs Python 3.11 or newer, and this is Python 3.10', 1, true) ~= nil, 'also when ipykernel is missing: ' .. text)
+    assert_true(text:find(py .. ' -m pip install -U "ipykernel<7"', 1, true) ~= nil, 'with ipykernel 6 advised: ' .. text)
+    vim.env.NBS_FAKE_EXIT = nil
+    vim.env.NBS_FAKE_PYTHON_VERSION = '3.11'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    assert_true(text:find(py .. ' -m pip install -U "ipykernel>=7.4"', 1, true) ~= nil, 'Python 3.11 can have ipykernel 7.4: ' .. text)
+    assert_true(text:find('needs Python 3.11', 1, true) == nil, 'without the note: ' .. text)
     vim.env.NBS_FAKE_PYTHON_VERSION = nil
+
+    -- A line the interpreter prints at startup (sitecustomize) must not be
+    -- taken for a version.
+    vim.env.NBS_FAKE_STARTUP_LINE = 'hello from sitecustomize'
+    text = f.health({ kernel_name = 'nbs-direct' })
+    line = f.line(text, label .. 'ipykernel 7.3.0')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'ipykernel 7.3.0 is still found and a warning: ' .. text)
+    assert_true(text:find('ipykernel 3.12', 1, true) == nil, 'the Python version is not taken for the ipykernel version: ' .. text)
+    vim.env.NBS_FAKE_STARTUP_LINE = nil
 
     vim.env.NBS_FAKE_IPYKERNEL_VERSION = 'unknown'
     text = f.health({ kernel_name = 'nbs-direct' })
@@ -1381,9 +1402,13 @@ test('checkhealth warns about ipykernel 7.0 to 7.3', function()
   vim.fn.chdir(old_cwd)
   f.restore()
   if not ok then error(err, 0) end
+  -- Including variables that were not set before.
+  assert_eq(vim.env.JUPYTER_PATH, jupyter_path, 'the fixture must restore JUPYTER_PATH')
+  assert_eq(vim.env.NBS_FAKE_IPYKERNEL_VERSION, fake_version, 'the fixture must restore the stand-in variables')
 end)
 
 test('checkhealth runs a kernelspec only if it starts ipykernel directly', function()
+  local jupyter_path, fake_version = vim.env.JUPYTER_PATH, vim.env.NBS_FAKE_IPYKERNEL_VERSION
   local f = ipykernel_check_fixture()
 
   local ok, err = pcall(function()
@@ -1420,6 +1445,30 @@ test('checkhealth runs a kernelspec only if it starts ipykernel directly', funct
     f.python(dir .. '/python')
     text = f.health({ kernel_name = 'nbs-resource' })
     assert_true(f.line(text, "kernelspec 'nbs-resource': ipykernel 7.2.0") ~= nil, '{resource_dir} is expanded: ' .. text)
+    dir = f.kernelspec('nbs-resource-option', { argv = { python, '-Xpycache_prefix={resource_dir}/cache', '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
+    text, args = f.health({ kernel_name = 'nbs-resource-option' })
+    assert_true(args ~= nil and vim.startswith(args, '-Xpycache_prefix=' .. dir .. '/cache -c '), '{resource_dir} is expanded in the options too: ' .. tostring(args))
+
+    -- A bare name is looked up in the PATH of the kernelspec's env when that
+    -- sets one (the backend's Command does so), and only there.
+    f.python(f.root .. '/env-path/nbs-env-path-python')
+    f.kernelspec('nbs-env-path', {
+      argv = { 'nbs-env-path-python', '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      env = { PATH = f.root .. '/env-path' },
+    })
+    text = f.health({ kernel_name = 'nbs-env-path' })
+    assert_true(text:find('cannot be found', 1, true) == nil, 'a program on the env PATH is found: ' .. text)
+    assert_true(f.line(text, "kernelspec 'nbs-env-path': ipykernel 7.2.0") ~= nil, 'and checked: ' .. text)
+    f.python(f.root .. '/nvim-path/nbs-nvim-path-python')
+    vim.env.PATH = f.root .. '/nvim-path:' .. vim.env.PATH
+    f.kernelspec('nbs-not-on-env-path', {
+      argv = { 'nbs-nvim-path-python', '-m', 'ipykernel_launcher', '-f', '{connection_file}' },
+      env = { PATH = f.root .. '/env-path' },
+    })
+    text, args = f.health({ kernel_name = 'nbs-not-on-env-path' })
+    line = f.line(text, "kernelspec 'nbs-not-on-env-path' runs nbs-nvim-path-python, which cannot be found")
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'a program only on Neovim\'s PATH is not found by the kernel: ' .. text)
+    assert_eq(args, nil, 'and not run')
 
     -- A program that cannot be found or run is reported, and the rest of the
     -- report still follows.
@@ -1427,6 +1476,10 @@ test('checkhealth runs a kernelspec only if it starts ipykernel directly', funct
     text = f.health({ kernel_name = 'nbs-missing-program' })
     line = f.line(text, "kernelspec 'nbs-missing-program' runs " .. f.root .. '/no/python, which cannot be found')
     assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'a missing program is a warning: ' .. text)
+    f.kernelspec('nbs-missing-julia', { argv = { f.root .. '/no/julia', '-i', '{connection_file}' }, language = 'julia' })
+    text = f.health({ kernel_name = 'nbs-missing-julia' })
+    line = f.line(text, "kernelspec 'nbs-missing-julia' runs " .. f.root .. '/no/julia, which cannot be found')
+    assert_true(line ~= nil and line:find('WARNING', 1, true) ~= nil, 'for any language: ' .. text)
     local broken = f.python(f.root .. '/bin/broken', { '#!/nonexistent/bin/python3', 'echo 7.2.0' })
     f.kernelspec('nbs-broken', { argv = { broken, '-m', 'ipykernel_launcher', '-f', '{connection_file}' } })
     text = f.health({ kernel_name = 'nbs-broken' })
@@ -1438,6 +1491,9 @@ test('checkhealth runs a kernelspec only if it starts ipykernel directly', funct
 
   f.restore()
   if not ok then error(err, 0) end
+  -- Including variables that were not set before.
+  assert_eq(vim.env.JUPYTER_PATH, jupyter_path, 'the fixture must restore JUPYTER_PATH')
+  assert_eq(vim.env.NBS_FAKE_IPYKERNEL_VERSION, fake_version, 'the fixture must restore the stand-in variables')
 end)
 
 test('a failed backend download keeps the installed backend', function()

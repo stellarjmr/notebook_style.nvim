@@ -113,14 +113,21 @@ local function find_kernelspec(name)
 end
 
 --- How to get an ipykernel without that problem into `python`: 7.4 or newer,
---- or 6 if the Python is older than 3.11, which ipykernel 7.4 needs.
-local function ipykernel_advice(python, old_python)
+--- or 6 if the Python (`python_version`, "3.10"; nil if unknown) is older
+--- than 3.11, which ipykernel 7.4 needs.
+local function ipykernel_advice(python, python_version)
   local py = vim.fn.shellescape(python)
+  local major, minor = (python_version or ''):match('^(%d+)%.(%d+)$')
+  local old_python = major ~= nil and (tonumber(major) < 3 or (tonumber(major) == 3 and tonumber(minor) < 11))
   local requirement = old_python and '"ipykernel<7"' or '"ipykernel>=7.4"'
-  return {
+  local advice = {
     ('%s -m pip install -U %s'):format(py, requirement),
     ('In a venv made by uv, which has no pip: uv pip install --python %s -U %s'):format(py, requirement),
   }
+  if old_python then
+    table.insert(advice, 1, ('ipykernel 7.4 needs Python 3.11 or newer, and this is Python %s: use ipykernel 6, which does not have the problem, or a newer Python'):format(python_version))
+  end
+  return advice
 end
 
 --- ipykernel 7.0 to 7.3 can stop handling requests when one arrives while it
@@ -131,7 +138,7 @@ local function check_ipykernel_version(label, python, options, env)
   local cmd = vim.list_extend({ python }, options or {})
   vim.list_extend(cmd, {
     '-c',
-    "import sys; print('%d.%d' % sys.version_info[:2]); import ipykernel; print(ipykernel.__version__)",
+    "import sys; print('notebook_style:python=%d.%d' % sys.version_info[:2]); import ipykernel; print('notebook_style:ipykernel=' + ipykernel.__version__)",
   })
   -- vim.system raises when the program cannot be started, e.g. a script
   -- whose #! interpreter is missing.
@@ -146,29 +153,26 @@ local function check_ipykernel_version(label, python, options, env)
     health.info(('%s: could not read the ipykernel version of %s within 5 s'):format(label, python))
     return
   end
-  local lines = vim.split(vim.trim(result.stdout or ''), '\n', { plain = true })
-  local py_major, py_minor = (lines[1] or ''):match('^(%d+)%.(%d+)$')
-  local old_python = py_major ~= nil and (tonumber(py_major) < 3 or (tonumber(py_major) == 3 and tonumber(py_minor) < 11))
+  -- Labelled lines: the interpreter can print other lines at startup
+  -- (sitecustomize, .pth files).
+  local stdout = '\n' .. (result.stdout or '')
+  local python_version = stdout:match('\nnotebook_style:python=(%d+%.%d+)')
   if result.code ~= 0 then
     local reason = vim.trim(result.stderr or ''):match('[^\n]*$')
     health.warn(
       ('%s: %s cannot import ipykernel%s'):format(label, python, reason ~= '' and (': ' .. reason) or ''),
-      ipykernel_advice(python, old_python)
+      ipykernel_advice(python, python_version)
     )
     return
   end
-  local version = lines[2] or ''
-  local major, minor = version:match('^(%d+)%.(%d+)')
+  local version = stdout:match('\nnotebook_style:ipykernel=([^\n]*)')
+  local major, minor = (version or ''):match('^(%d+)%.(%d+)')
   if not major then
-    health.info(('%s: could not read the ipykernel version of %s (it printed %s)'):format(label, python, vim.inspect(version)))
+    health.info(('%s: could not read the ipykernel version of %s (it printed %s)'):format(label, python, vim.inspect(vim.trim(result.stdout or ''))))
   elseif tonumber(major) == 7 and tonumber(minor) < 4 then
-    local advice = ipykernel_advice(python, old_python)
-    if old_python then
-      table.insert(advice, 1, ('ipykernel 7.4 needs Python 3.11 or newer, and this is Python %s.%s: use ipykernel 6, which does not have the problem, or a newer Python'):format(py_major, py_minor))
-    end
     health.warn(
       ('%s: ipykernel %s can stop handling requests when cells are run in quick succession; they then stay busy until the kernel is restarted (fixed in ipykernel 7.4)'):format(label, version),
-      advice
+      ipykernel_advice(python, python_version)
     )
   else
     health.ok(('%s: ipykernel %s'):format(label, version))
@@ -196,6 +200,22 @@ local function ipykernel_options(argv)
   return nil
 end
 
+--- The program a kernelspec runs, found as the backend finds it: like
+--- Rust's Command, a bare name is looked up in the PATH of the kernelspec's
+--- env when that sets one, otherwise in Neovim's. nil if it is not there.
+local function find_program(program, env)
+  local path = type(env) == 'table' and env.PATH
+  if type(path) ~= 'string' or program:find('[/\\]') then
+    return vim.fn.executable(program) == 1 and program or nil
+  end
+  for _, dir in ipairs(vim.split(path, vim.fn.has('win32') == 1 and ';' or ':', { plain = true })) do
+    if dir ~= '' and vim.fn.executable(dir .. '/' .. program) == 1 then
+      return dir .. '/' .. program
+    end
+  end
+  return nil
+end
+
 --- What a kernelspec runs: the program must exist, and a Python kernel that
 --- runs ipykernel directly gets its ipykernel version checked.
 local function check_kernelspec(label, spec_dir)
@@ -207,14 +227,15 @@ local function check_kernelspec(label, spec_dir)
   local function expand(arg)
     return (arg:gsub('{resource_dir}', function() return spec_dir end))
   end
-  local program = expand(spec.argv[1])
-  if vim.fn.executable(program) ~= 1 then
-    health.warn(('%s runs %s, which cannot be found or is not executable, so the kernel cannot start'):format(label, program))
+  local env = type(spec.env) == 'table' and spec.env or nil
+  local program = find_program(expand(spec.argv[1]), env)
+  if not program then
+    health.warn(('%s runs %s, which cannot be found or is not executable, so the kernel cannot start'):format(label, expand(spec.argv[1])))
     return
   end
   local options = spec.language == 'python' and ipykernel_options(spec.argv)
   if options then
-    check_ipykernel_version(label, program, vim.tbl_map(expand, options), type(spec.env) == 'table' and spec.env or nil)
+    check_ipykernel_version(label, program, vim.tbl_map(expand, options), env)
   end
 end
 
