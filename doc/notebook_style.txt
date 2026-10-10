@@ -2,7 +2,7 @@
 
 Author:  stellarjmr
 License: MIT
-Version: 0.11.0
+Version: 0.12.0
 
 ==============================================================================
 CONTENTS                                            *notebook_style-contents*
@@ -47,7 +47,7 @@ Using lazy.nvim: >lua
 With the optional inline execution backend installer: >lua
     {
       'stellarjmr/notebook_style.nvim',
-      version = 'v0.11.0',
+      version = 'v0.12.0',
       ft = 'python',
       build = function(plugin)
         local install = loadfile(plugin.dir .. '/lua/notebook_style/install.lua')()
@@ -86,7 +86,7 @@ autocommand before vim.pack.add(): >lua
     })
 
     vim.pack.add({
-      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.11.0' },
+      { src = 'https://github.com/stellarjmr/notebook_style.nvim', name = plugin_name, version = 'v0.12.0' },
     })
 
     require('notebook_style').setup({})

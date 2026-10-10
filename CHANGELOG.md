@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.12.0] - 2026-10-10
 
 ### Added
 - `:checkhealth notebook_style` reports the ipykernel version of the local `.venv` Python and of the kernelspec's Python when the kernelspec runs ipykernel directly (`python -m ipykernel_launcher`; wrappers such as `conda run` are not run), and warns about ipykernel 7.0 to 7.3: those versions can stop handling requests when cells are run in quick succession, and the cells then stay busy until the kernel is restarted (fixed in ipykernel 7.4; with a Python older than 3.11, which 7.4 needs, ipykernel 6 does not have the problem). It also warns when the program a kernelspec runs cannot be found (a bare name is looked up in the PATH the kernelspec's env sets, if it sets one, as the backend does). README and help recommend ipykernel 7.4 or newer.
