@@ -6,11 +6,16 @@
 
 use anyhow::Result;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tracing_subscriber::EnvFilter;
+
+/// core.log is renamed to core.log.1 once it reaches this size (see logfile.rs).
+const LOG_LIMIT: u64 = 10 * 1024 * 1024;
 
 mod kernel;
 mod kernelspec;
 mod kitty;
+mod logfile;
 mod notebook;
 mod protocol;
 mod rpc;
@@ -37,13 +42,13 @@ fn init_logging() -> Result<()> {
         .join("notebook_style");
     std::fs::create_dir_all(&log_dir)?;
 
-    let file_appender = tracing_appender::rolling::never(&log_dir, "core.log");
+    let log = logfile::RotatingLog::open(log_dir.join("core.log"), LOG_LIMIT)?;
     let env =
         EnvFilter::try_from_env("NOTEBOOK_STYLE_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(env)
-        .with_writer(file_appender)
+        .with_writer(Mutex::new(log))
         .with_ansi(false)
         .with_target(true)
         .with_thread_ids(false)
